@@ -1,0 +1,47 @@
+[package]
+name = "llmwiki-tooling"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "CLI for managing LLM-wikis with Obsidian-style wikilinks."
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/llmwiki-tooling"
+repository = "https://github.com/ilya-epifanov/llmwiki-tooling"
+keywords = ["cli", "wiki", "markdown", "obsidian", "wikilinks"]
+include = [
+  "/src/**/*",
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/README.md",
+  "/LICENSE-MIT",
+  "/LICENSE-APACHE",
+]
+
+[[bin]]
+name = "llmwiki-tool"
+path = "src/main.rs"
+
+[dependencies]
+pulldown-cmark = "0.13"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yml = "0.0"
+serde_json = "1"
+thiserror = "2"
+ignore = "0.4"
+aho-corasick = "1"
+regex-lite = "0.1"
+anyhow = "1"
+toml = "0.8"
+elsa = "1.11"
+once_cell = "1"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

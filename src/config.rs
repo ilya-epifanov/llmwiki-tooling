@@ -317,7 +317,7 @@ impl WikiConfig {
         };
 
         // Sort most-specific first (longest path) for resolution
-        directories.sort_by(|a, b| b.path.len().cmp(&a.path.len()));
+        directories.sort_by_key(|dir| std::cmp::Reverse(dir.path.len()));
 
         let linking = LinkingConfig {
             exclude: raw.linking.exclude.into_iter().collect(),

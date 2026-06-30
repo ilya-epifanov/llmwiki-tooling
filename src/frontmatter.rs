@@ -75,7 +75,7 @@ pub fn parse_frontmatter(source: &str) -> Result<Option<Frontmatter>, Frontmatte
     };
     let data: serde_yml::Value =
         serde_yml::from_str(yaml_str).map_err(|e| FrontmatterError::Yaml {
-            source: e,
+            source: Box::new(e),
             context: yaml_str.chars().take(80).collect(),
         })?;
     Ok(Some(Frontmatter {

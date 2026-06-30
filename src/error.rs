@@ -81,7 +81,7 @@ pub enum FrontmatterError {
     #[error("YAML parse error near '{context}'")]
     Yaml {
         #[source]
-        source: serde_yml::Error,
+        source: Box<serde_yml::Error>,
         context: String,
     },
 }

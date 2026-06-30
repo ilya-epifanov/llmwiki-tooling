@@ -65,7 +65,7 @@ pub fn set(wiki: &mut Wiki, file: &Path, field: &str, value: &str) -> Result<(),
         serde_yml::from_str(&fm.raw_yaml).map_err(|e| WikiError::Frontmatter {
             path: file_path.clone(),
             source: crate::error::FrontmatterError::Yaml {
-                source: e,
+                source: Box::new(e),
                 context: field.to_owned(),
             },
         })?;
@@ -74,13 +74,13 @@ pub fn set(wiki: &mut Wiki, file: &Path, field: &str, value: &str) -> Result<(),
         serde_yml::from_str(value).unwrap_or(serde_yml::Value::String(value.to_owned()));
 
     if let serde_yml::Value::Mapping(ref mut map) = yaml_value {
-        map.insert(serde_yml::Value::String(field.to_owned()), parsed_value);
+        map.insert(field, parsed_value);
     }
 
     let new_yaml = serde_yml::to_string(&yaml_value).map_err(|e| WikiError::Frontmatter {
         path: file_path.clone(),
         source: crate::error::FrontmatterError::Yaml {
-            source: e,
+            source: Box::new(e),
             context: field.to_owned(),
         },
     })?;

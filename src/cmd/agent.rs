@@ -171,12 +171,7 @@ pub fn scan(root: &WikiRoot) -> Result<(), WikiError> {
             && let serde_yml::Value::Mapping(map) = fm.data()
         {
             for key in map.keys() {
-                if let Some(key_str) = key.as_str() {
-                    *stats
-                        .frontmatter_fields
-                        .entry(key_str.to_owned())
-                        .or_insert(0) += 1;
-                }
+                *stats.frontmatter_fields.entry(key.to_owned()).or_insert(0) += 1;
             }
         }
 

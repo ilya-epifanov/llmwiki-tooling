@@ -6,7 +6,7 @@ use std::ops::Range;
 /// earlier byte offsets remain valid after later replacements.
 pub fn apply(source: &str, edits: &[(Range<usize>, String)]) -> String {
     let mut sorted: Vec<_> = edits.iter().collect();
-    sorted.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+    sorted.sort_by_key(|edit| std::cmp::Reverse(edit.0.start));
 
     let mut result = source.to_owned();
     for (range, replacement) in sorted {

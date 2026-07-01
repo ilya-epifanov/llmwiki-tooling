@@ -28,13 +28,13 @@ impl WikiRoot {
         };
         loop {
             if dir.join("wiki.toml").is_file() {
-                return Ok(Self(dir));
+                return Self::new(dir);
             }
             if dir.join("index.md").is_file() && dir.join("wiki").is_dir() {
-                return Ok(Self(dir));
+                return Self::new(dir);
             }
             if dir.join("index.md").is_file() {
-                return Ok(Self(dir));
+                return Self::new(dir);
             }
             if !dir.pop() {
                 return Err(WikiError::RootNotFound {
@@ -49,7 +49,7 @@ impl WikiRoot {
             || path.join("index.md").is_file()
             || path.join("wiki").is_dir()
         {
-            Ok(Self(path))
+            Self::new(path)
         } else {
             Err(WikiError::RootNotFound { start: path })
         }
@@ -57,6 +57,12 @@ impl WikiRoot {
 
     pub fn path(&self) -> &Path {
         &self.0
+    }
+
+    fn new(path: PathBuf) -> Result<Self, WikiError> {
+        path.canonicalize()
+            .map(Self)
+            .map_err(|_| WikiError::RootNotFound { start: path })
     }
 }
 
@@ -238,7 +244,10 @@ impl Wiki {
     }
 
     pub fn index_path(&self) -> Option<PathBuf> {
-        self.config.index.as_ref().map(|idx| self.root.path().join(idx))
+        self.config
+            .index
+            .as_ref()
+            .map(|idx| self.root.path().join(idx))
     }
 
     /// Get the absolute path for a page entry.
@@ -369,5 +378,38 @@ impl Wiki {
             path: new_abs,
             source: e,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_roots_are_canonicalized_before_building_paths() {
+        let cwd = std::env::current_dir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix(".wiki-root-")
+            .tempdir_in(&cwd)
+            .unwrap();
+        std::fs::create_dir(dir.path().join("wiki")).unwrap();
+        std::fs::write(dir.path().join("index.md"), "# Index\n").unwrap();
+        std::fs::write(dir.path().join("wiki/Foo.md"), "# Foo\n").unwrap();
+
+        let relative_root = PathBuf::from(dir.path().file_name().unwrap());
+        let root = WikiRoot::from_path(relative_root).unwrap();
+
+        assert!(root.path().is_absolute());
+
+        let config = WikiConfig::auto_detect(root.path());
+        let wiki = Wiki::build(root, config).unwrap();
+        let foo = wiki
+            .all_scannable_files()
+            .into_iter()
+            .find(|path| path.ends_with("Foo.md"))
+            .unwrap();
+
+        assert!(foo.is_absolute());
+        assert_eq!(wiki.source(&foo).unwrap(), "# Foo\n");
     }
 }

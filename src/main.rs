@@ -185,7 +185,9 @@ fn run() -> Result<ExitCode, anyhow::Error> {
             match action {
                 SetupAction::Prompt => llmwiki_tooling::cmd::agent::setup(&root)?,
                 SetupAction::ExampleConfig => llmwiki_tooling::cmd::agent::example_config(),
-                SetupAction::Init { force, show } => llmwiki_tooling::cmd::init::init(&root, *force, *show)?,
+                SetupAction::Init { force, show } => {
+                    llmwiki_tooling::cmd::init::init(&root, *force, *show)?
+                }
             }
             return Ok(ExitCode::SUCCESS);
         }
@@ -257,7 +259,8 @@ fn run() -> Result<ExitCode, anyhow::Error> {
                 dirs,
                 write,
             } => {
-                let count = llmwiki_tooling::cmd::sections::rename(&mut wiki, &old, &new, &dirs, write)?;
+                let count =
+                    llmwiki_tooling::cmd::sections::rename(&mut wiki, &old, &new, &dirs, write)?;
                 if count > 0 && !write {
                     eprintln!("{count} occurrence(s) to rename. Use --write to apply.");
                 } else if count == 0 {

@@ -21,7 +21,7 @@
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
         };
-        claude-code = llm-agents.packages.${system}.claude-code;
+        llm-pkgs = llm-agents.packages.${system};
         rust-toolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-analyzer" "clippy" "rustfmt" ];
         };
@@ -29,7 +29,10 @@
         packages.default = pkgs.buildFHSEnv {
           name = "llmwiki-tooling-env";
           targetPkgs = pkgs: with pkgs; [
-            claude-code
+            llm-pkgs.claude-code
+            llm-pkgs.pi
+            ripgrep
+            ast-grep
             git
             cacert
             rust-toolchain

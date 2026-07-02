@@ -49,6 +49,8 @@ pub struct WikiConfig {
     pub index: Option<String>,
     /// Content directories, sorted most-specific-first for resolution.
     pub directories: Vec<DirectoryConfig>,
+    /// Markdown walk ignore settings.
+    pub ignore: IgnoreConfig,
     /// Linking behavior settings.
     pub linking: LinkingConfig,
     /// Wiki-wide structural check severities.
@@ -64,6 +66,54 @@ pub struct DirectoryConfig {
     pub path: String,
     /// Whether pages in this directory feed bare mention detection.
     pub autolink: bool,
+}
+
+const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
+    ".agents/",
+    ".claude/",
+    ".clinerules/",
+    ".codex/",
+    ".continue/",
+    ".cursor/",
+    ".gemini/",
+    ".github/",
+    ".gsd/",
+    ".kiro/",
+    ".kilocode/",
+    ".opencode/",
+    ".openhands/",
+    ".pi/",
+    ".qwen/",
+    ".roo/",
+    ".windsurf/",
+];
+
+/// Markdown walk ignore settings.
+#[derive(Debug, Clone)]
+pub struct IgnoreConfig {
+    /// Whether built-in non-wiki tool directory patterns are included.
+    pub default_patterns: bool,
+    /// Extra gitignore-style patterns, additive with defaults.
+    pub patterns: Vec<String>,
+}
+
+impl Default for IgnoreConfig {
+    fn default() -> Self {
+        Self {
+            default_patterns: true,
+            patterns: Vec::new(),
+        }
+    }
+}
+
+impl IgnoreConfig {
+    pub(crate) fn effective_patterns(&self) -> impl Iterator<Item = &str> {
+        DEFAULT_IGNORE_PATTERNS
+            .iter()
+            .copied()
+            .filter(|_| self.default_patterns)
+            .chain(self.patterns.iter().map(String::as_str))
+    }
 }
 
 /// Global linking behavior.
@@ -154,6 +204,8 @@ struct RawConfig {
     #[serde(default)]
     directories: Vec<RawDirectoryConfig>,
     #[serde(default)]
+    ignore: RawIgnoreConfig,
+    #[serde(default)]
     linking: RawLinkingConfig,
     #[serde(default)]
     checks: RawChecksConfig,
@@ -170,6 +222,23 @@ struct RawDirectoryConfig {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Deserialize)]
+struct RawIgnoreConfig {
+    #[serde(default = "default_true")]
+    default_patterns: bool,
+    #[serde(default)]
+    patterns: Vec<String>,
+}
+
+impl Default for RawIgnoreConfig {
+    fn default() -> Self {
+        Self {
+            default_patterns: true,
+            patterns: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -278,6 +347,7 @@ impl WikiConfig {
                 path: dir_path.to_owned(),
                 autolink: true,
             }],
+            ignore: IgnoreConfig::default(),
             linking: LinkingConfig {
                 exclude: HashSet::new(),
                 autolink_field: default_autolink_field(),
@@ -319,6 +389,12 @@ impl WikiConfig {
         // Sort most-specific first (longest path) for resolution
         directories.sort_by_key(|dir| std::cmp::Reverse(dir.path.len()));
 
+        let ignore = IgnoreConfig {
+            default_patterns: raw.ignore.default_patterns,
+            patterns: raw.ignore.patterns,
+        };
+        validate_ignore_patterns(&ignore)?;
+
         let linking = LinkingConfig {
             exclude: raw.linking.exclude.into_iter().collect(),
             autolink_field: raw.linking.autolink_field,
@@ -352,6 +428,7 @@ impl WikiConfig {
                 None => Some("index.md".to_owned()),
             },
             directories,
+            ignore,
             linking,
             checks,
             rules,
@@ -395,6 +472,27 @@ impl WikiConfig {
             })
             .collect()
     }
+}
+
+fn validate_ignore_patterns(ignore: &IgnoreConfig) -> Result<(), ConfigError> {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(Path::new(""));
+    for pattern in ignore.effective_patterns() {
+        if pattern.starts_with('!') {
+            return Err(ConfigError::Validation(format!(
+                "ignore pattern '{pattern}' cannot start with '!'"
+            )));
+        }
+        builder
+            .add_line(None, pattern)
+            .map_err(|source| ConfigError::InvalidIgnorePattern {
+                pattern: pattern.to_owned(),
+                source,
+            })?;
+    }
+    builder
+        .build()
+        .map_err(|source| ConfigError::CompileIgnorePatterns { source })?;
+    Ok(())
 }
 
 fn convert_rule(raw: RawRuleConfig) -> Result<RuleConfig, ConfigError> {
@@ -567,6 +665,7 @@ severity = "warn"
                     autolink: true,
                 },
             ],
+            ignore: IgnoreConfig::default(),
             linking: LinkingConfig {
                 exclude: HashSet::new(),
                 autolink_field: "autolink".to_owned(),
@@ -632,6 +731,35 @@ match_in = "wiki"
         let raw: RawConfig = toml::from_str(toml).unwrap();
         let err = WikiConfig::from_raw(raw).unwrap_err();
         assert!(err.to_string().contains("nonexistent"));
+    }
+
+    #[test]
+    fn parses_ignore_config() {
+        let toml = r#"
+[ignore]
+default_patterns = false
+patterns = ["generated/"]
+"#;
+        let raw: RawConfig = toml::from_str(toml).unwrap();
+        let config = WikiConfig::from_raw(raw).unwrap();
+
+        assert!(!config.ignore.default_patterns);
+        assert_eq!(config.ignore.patterns, ["generated/"]);
+        assert_eq!(
+            config.ignore.effective_patterns().collect::<Vec<_>>(),
+            ["generated/"]
+        );
+    }
+
+    #[test]
+    fn rejects_unignore_patterns() {
+        let toml = r#"
+[ignore]
+patterns = ["!.claude/"]
+"#;
+        let raw: RawConfig = toml::from_str(toml).unwrap();
+        let err = WikiConfig::from_raw(raw).unwrap_err();
+        assert!(err.to_string().contains("cannot start with '!'"));
     }
 
     #[test]

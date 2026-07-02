@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::error::{RenameError, WikiError};
 use crate::page::PageId;
 use crate::splice;
+use crate::walk::wiki_walk_builder;
 use crate::wiki::Wiki;
 
 type Edits = Vec<(Range<usize>, String)>;
@@ -67,13 +68,25 @@ fn plan_rename(wiki: &Wiki, old_name: &str, new_name: &str) -> Result<RenameOp, 
     // Search all configured directories
     for dir_config in &config.directories {
         let dir = root.path().join(&dir_config.path);
-        moves.extend(find_files_to_rename(&dir, old_name, new_name));
+        moves.extend(find_files_to_rename(
+            root.path(),
+            &dir,
+            &config.ignore,
+            old_name,
+            new_name,
+        )?);
     }
 
     // Search mirror-parity right paths
     for (_, right) in config.mirror_paths() {
         let dir = root.path().join(right);
-        moves.extend(find_files_to_rename(&dir, old_name, new_name));
+        moves.extend(find_files_to_rename(
+            root.path(),
+            &dir,
+            &config.ignore,
+            old_name,
+            new_name,
+        )?);
     }
 
     // Find all wikilink references to update
@@ -120,20 +133,22 @@ fn plan_rename(wiki: &Wiki, old_name: &str, new_name: &str) -> Result<RenameOp, 
 }
 
 fn find_files_to_rename(
+    wiki_root: &std::path::Path,
     dir: &std::path::Path,
+    ignore: &crate::config::IgnoreConfig,
     old_name: &str,
     new_name: &str,
-) -> Vec<(PathBuf, PathBuf)> {
+) -> Result<Vec<(PathBuf, PathBuf)>, WikiError> {
     let mut moves = Vec::new();
     if !dir.is_dir() {
-        return moves;
+        return Ok(moves);
     }
     let target_filename = format!("{old_name}.md");
-    for entry in ignore::WalkBuilder::new(dir)
-        .hidden(false)
-        .build()
-        .flatten()
-    {
+    for entry in wiki_walk_builder(dir, wiki_root, ignore).map(|builder| builder.build())? {
+        let entry = entry.map_err(|e| WikiError::Walk {
+            path: dir.to_path_buf(),
+            source: e,
+        })?;
         let path = entry.path();
         if path.is_file()
             && path
@@ -144,7 +159,7 @@ fn find_files_to_rename(
             moves.push((path.to_path_buf(), new_path));
         }
     }
-    moves
+    Ok(moves)
 }
 
 fn display_rename(wiki: &Wiki, op: &RenameOp) -> Result<(), WikiError> {

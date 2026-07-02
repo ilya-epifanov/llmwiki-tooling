@@ -9,7 +9,7 @@ pub mod sections;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Edits collected during read phase for later application.
 pub(crate) type FileEdits = Vec<(PathBuf, String, Vec<(Range<usize>, String)>)>;
@@ -20,11 +20,6 @@ pub(crate) struct DirStats {
     pub file_count: usize,
     pub frontmatter_fields: HashMap<String, usize>,
     pub section_headings: HashMap<String, usize>,
-}
-
-/// Check if a path is a markdown file.
-pub(crate) fn is_markdown_file(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| ext == "md") && path.is_file()
 }
 
 /// Check if two slash-separated paths share at least one path component.

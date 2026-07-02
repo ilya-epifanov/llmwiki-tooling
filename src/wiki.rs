@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use elsa::FrozenMap;
 use once_cell::unsync::OnceCell as OnceCellTry;
 
-use crate::cmd::is_markdown_file;
 use crate::config::WikiConfig;
 use crate::error::{FrontmatterError, WikiError};
 use crate::frontmatter::{self, Frontmatter};
 use crate::page::{BlockId, Heading, PageId, WikilinkOccurrence};
 use crate::parse::{self, ClassifiedRange};
+use crate::walk::{is_markdown_file, wiki_walk_builder};
 
 /// Validated wiki root directory.
 #[derive(Debug, Clone)]
@@ -162,7 +162,7 @@ impl Wiki {
                 continue;
             }
 
-            for entry in ignore::WalkBuilder::new(&dir_path).hidden(false).build() {
+            for entry in wiki_walk_builder(&dir_path, root.path(), &config.ignore)?.build() {
                 let entry = entry.map_err(|e| WikiError::Walk {
                     path: dir_path.clone(),
                     source: e,

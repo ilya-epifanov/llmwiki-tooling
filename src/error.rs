@@ -28,6 +28,19 @@ pub enum ConfigError {
         source: regex_lite::Error,
     },
 
+    #[error("invalid ignore pattern '{pattern}'")]
+    InvalidIgnorePattern {
+        pattern: String,
+        #[source]
+        source: ignore::Error,
+    },
+
+    #[error("compiling ignore patterns")]
+    CompileIgnorePatterns {
+        #[source]
+        source: ignore::Error,
+    },
+
     #[error("config validation: {0}")]
     Validation(String),
 }
@@ -54,6 +67,19 @@ pub enum WikiError {
     #[error("walking '{path}'")]
     Walk {
         path: PathBuf,
+        #[source]
+        source: ignore::Error,
+    },
+
+    #[error("invalid ignore pattern '{pattern}'")]
+    InvalidIgnorePattern {
+        pattern: String,
+        #[source]
+        source: ignore::Error,
+    },
+
+    #[error("compiling ignore patterns")]
+    CompileIgnorePatterns {
         #[source]
         source: ignore::Error,
     },

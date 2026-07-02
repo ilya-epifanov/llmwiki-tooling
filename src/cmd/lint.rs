@@ -2,6 +2,7 @@ use crate::config::{MatchMode, RuleConfig, Severity, WikiConfig};
 use crate::error::WikiError;
 use crate::link_index::LinkIndex;
 use crate::resolve;
+use crate::walk::{is_markdown_file, wiki_walk_builder};
 use crate::wiki::Wiki;
 
 /// Severity filter for lint output.
@@ -268,8 +269,8 @@ fn run_mirror_parity(
     let left_dir = wiki.root().path().join(left);
     let right_dir = wiki.root().path().join(right);
 
-    let left_stems = collect_md_stems(&left_dir)?;
-    let right_stems = collect_md_stems(&right_dir)?;
+    let left_stems = collect_md_stems(wiki, &left_dir)?;
+    let right_stems = collect_md_stems(wiki, &right_dir)?;
 
     for stem in &left_stems {
         if !right_stems.contains(stem) {
@@ -287,18 +288,21 @@ fn run_mirror_parity(
     Ok(count)
 }
 
-fn collect_md_stems(dir: &std::path::Path) -> Result<std::collections::HashSet<String>, WikiError> {
+fn collect_md_stems(
+    wiki: &Wiki,
+    dir: &std::path::Path,
+) -> Result<std::collections::HashSet<String>, WikiError> {
     let mut stems = std::collections::HashSet::new();
     if !dir.is_dir() {
         return Ok(stems);
     }
-    for entry in ignore::WalkBuilder::new(dir).hidden(false).build() {
+    for entry in wiki_walk_builder(dir, wiki.root().path(), &wiki.config().ignore)?.build() {
         let entry = entry.map_err(|e| WikiError::Walk {
             path: dir.to_path_buf(),
             source: e,
         })?;
         let path = entry.path();
-        if super::is_markdown_file(path)
+        if is_markdown_file(path)
             && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
         {
             stems.insert(stem.to_owned());
@@ -315,7 +319,7 @@ enum MatchDirCache {
 }
 
 impl MatchDirCache {
-    fn load(dir: &std::path::Path, mode: MatchMode) -> Result<Self, WikiError> {
+    fn load(wiki: &Wiki, dir: &std::path::Path, mode: MatchMode) -> Result<Self, WikiError> {
         if !dir.is_dir() {
             return Ok(match mode {
                 MatchMode::Content => Self::Contents(Vec::new()),
@@ -324,13 +328,13 @@ impl MatchDirCache {
         }
         let mut contents = Vec::new();
         let mut stems = std::collections::HashSet::new();
-        for entry in ignore::WalkBuilder::new(dir).hidden(false).build() {
+        for entry in wiki_walk_builder(dir, wiki.root().path(), &wiki.config().ignore)?.build() {
             let entry = entry.map_err(|e| WikiError::Walk {
                 path: dir.to_path_buf(),
                 source: e,
             })?;
             let path = entry.path();
-            if !super::is_markdown_file(path) {
+            if !is_markdown_file(path) {
                 continue;
             }
             match mode {
@@ -376,7 +380,7 @@ fn run_citation_pattern(
     let regex = regex_lite::Regex::new(pattern).expect("regex pre-validated at config load");
 
     let match_dir = wiki.root().path().join(match_in);
-    let cache = MatchDirCache::load(&match_dir, match_mode)?;
+    let cache = MatchDirCache::load(wiki, &match_dir, match_mode)?;
 
     let mut count = 0;
 

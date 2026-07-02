@@ -178,7 +178,8 @@ fn run() -> Result<ExitCode, anyhow::Error> {
     // Commands that don't need config/catalog
     match &cli.command {
         Command::Scan => {
-            llmwiki_tooling::cmd::agent::scan(&root)?;
+            let config = WikiConfig::load_or_detect(root.path())?;
+            llmwiki_tooling::cmd::agent::scan(&root, &config.ignore)?;
             return Ok(ExitCode::SUCCESS);
         }
         Command::Setup { action } => {

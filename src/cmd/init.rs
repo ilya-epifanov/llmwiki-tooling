@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::config::IgnoreConfig;
 use crate::error::WikiError;
 use crate::frontmatter;
 use crate::parse;
+use crate::walk::{is_markdown_file, wiki_walk_builder};
 use crate::wiki::WikiRoot;
 
-use super::{DirStats, is_markdown_file, share_name_component};
+use super::{DirStats, share_name_component};
 
 /// Generate a minimal wiki.toml from detected wiki structure.
 pub fn init(root: &WikiRoot, force: bool, show: bool) -> Result<(), WikiError> {
@@ -215,7 +217,8 @@ fn list_subdirs(dir: &Path) -> Vec<String> {
 fn scan_all_dir_counts(root: &WikiRoot) -> Result<Vec<(String, usize)>, WikiError> {
     let mut counts: HashMap<String, usize> = HashMap::new();
 
-    for entry in ignore::WalkBuilder::new(root.path()).hidden(false).build() {
+    let ignore = IgnoreConfig::default();
+    for entry in wiki_walk_builder(root.path(), root.path(), &ignore)?.build() {
         let entry = entry.map_err(|e| WikiError::Walk {
             path: root.path().to_path_buf(),
             source: e,

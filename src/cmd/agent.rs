@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use crate::config::IgnoreConfig;
 use crate::error::WikiError;
 use crate::frontmatter;
 use crate::parse;
+use crate::walk::{is_markdown_file, wiki_walk_builder};
 use crate::wiki::WikiRoot;
 
-use super::{DirStats, detect_mirror_candidates, is_markdown_file};
+use super::{DirStats, detect_mirror_candidates};
 
 /// Output the setup workflow prompt for an LLM agent.
 pub fn setup(root: &WikiRoot) -> Result<(), WikiError> {
@@ -135,13 +137,13 @@ Key commands the documentation should cover:
 }
 
 /// Scan wiki structure and output per-directory statistics.
-pub fn scan(root: &WikiRoot) -> Result<(), WikiError> {
+pub fn scan(root: &WikiRoot, ignore: &IgnoreConfig) -> Result<(), WikiError> {
     let wiki_root = root.path();
 
     // Find all directories containing .md files
     let mut dir_stats: HashMap<String, DirStats> = HashMap::new();
 
-    for entry in ignore::WalkBuilder::new(wiki_root).hidden(false).build() {
+    for entry in wiki_walk_builder(wiki_root, wiki_root, ignore)?.build() {
         let entry = entry.map_err(|e| WikiError::Walk {
             path: wiki_root.to_path_buf(),
             source: e,
@@ -287,6 +289,7 @@ pub fn example_config() {
              # If ANY [[directories]] are declared, the default is replaced entirely.\n",
             build_directories_section(),
         ),
+        ("", build_ignore_section()),
         ("", build_linking_section()),
         (
             "# Wiki-wide structural checks. These apply to all pages regardless of directory.\n\
@@ -362,6 +365,21 @@ fn build_directories_section() -> String {
         out.push_str(&format!("path = \"{path}\"\n"));
         out.push_str(&format!("autolink = {autolink}\n\n"));
     }
+    out
+}
+
+fn build_ignore_section() -> String {
+    let mut out = String::new();
+    out.push_str("[ignore]\n");
+    out.push_str("# Built-in non-wiki tool directory patterns are enabled by default:\n");
+    out.push_str("# .agents/, .claude/, .cursor/, .windsurf/, .pi/, etc.\n");
+    out.push_str("# Cargo-style: set default_patterns = false to discard them all.\n");
+    out.push_str("# Default: true\n");
+    out.push_str("default_patterns = true\n\n");
+    out.push_str("# Extra gitignore-style patterns, relative to the wiki root.\n");
+    out.push_str("# Additive with defaults; cannot subtract individual default patterns.\n");
+    out.push_str("# Default: []\n");
+    out.push_str("patterns = [\"generated/\", \"scratch/**/*.md\"]\n\n");
     out
 }
 

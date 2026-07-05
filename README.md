@@ -56,6 +56,16 @@ llmwiki-tool setup init              # Generate wiki.toml from detected structur
 llmwiki-tool setup example-config    # Output annotated wiki.toml with all options
 ```
 
+`[[wikilinks]]` are scanned repo-wide across non-verbatim Markdown. Wikilinks resolve by filename stem or Obsidian `aliases:` frontmatter.
+
+Page categories:
+
+- **Managed pages** are `.md` files under declared `[[directories]]`. They are governed wiki entries: rules, orphans, index coverage, and auto-link candidate generation apply.
+- **Unmanaged pages** are non-verbatim `.md` files outside declared `[[directories]]`. They are link-aware but not governed: they can link to and be linked from managed pages, and repo-wide commands may check/rewrite their links, but they do not have required orphan/index/rule coverage.
+- **Verbatim pages** match `verbatim = ["drafts/", "exports/"]` or ignore patterns. They are skipped entirely by link scans, rewrites, and lint checks.
+
+Broken-link lint uses `[checks].broken_links` for managed pages (default: `error`) and `[checks].unmanaged_broken_links` for unmanaged pages (default: `warn`). Verbatim pages emit no link warnings or errors.
+
 <details>
 <summary>Command reference</summary>
 
@@ -75,7 +85,16 @@ llmwiki-tool rename "Old Page" "New Page"         # Rename page with full refere
 llmwiki-tool rename "Old Page" "New Page" --write # Apply changes
 ```
 
-Updates all `[[Old Page]]`, `[[Old Page#heading]]`, and `[[Old Page|alias]]` references across the wiki.
+Updates all `[[Old Page]]`, `[[Old Page#heading]]`, and `[[Old Page|alias]]` references across non-verbatim Markdown.
+
+### Move
+
+```bash
+llmwiki-tool move "Page Name" archive/topics         # Dry-run
+llmwiki-tool move "Page Name" archive/topics --write # Move and rebase relative markdown links
+```
+
+Moves a page file and updates relative standard Markdown links (`[text](path.md)` and `[id]: path.md`) that would otherwise point at the old location. Wikilinks usually do not need updates because resolution is name-based.
 
 ### Sections
 
@@ -110,6 +129,8 @@ llmwiki-tool lint                   # Run all checks (structural + configured ru
 llmwiki-tool lint --severity error  # Only errors
 llmwiki-tool lint --severity warn   # Only warnings
 ```
+
+Rules can be scoped by directory (`dirs = ["topics"]`), frontmatter predicate (`when = "type == concept"`), or both.
 
 ### Scan
 

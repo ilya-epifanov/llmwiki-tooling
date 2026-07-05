@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/ilya-epifanov/llmwiki-tooling/compare/v0.2.0...v0.3.0) - 2026-07-05
+
+### Added
+
+- support repo-wide wiki scans
+
+### Other
+
+- describe wiki configuration model
+
 ## [0.2.0](https://github.com/ilya-epifanov/llmwiki-tooling/compare/v0.1.1...v0.2.0) - 2026-07-02
 
 ### Other

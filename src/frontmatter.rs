@@ -1,13 +1,11 @@
+use std::ops::Range;
+
 use crate::error::FrontmatterError;
 
 /// Parsed YAML frontmatter from a markdown file. Schema-free.
 #[derive(Debug, Clone)]
 pub struct Frontmatter {
-    /// Raw YAML text between the `---` delimiters (excluding delimiters).
-    pub raw_yaml: String,
-    /// Byte range of the entire frontmatter block including `---` delimiters.
-    pub byte_range: std::ops::Range<usize>,
-    /// Parsed YAML value for arbitrary field access.
+    byte_range: Range<usize>,
     data: serde_yml::Value,
 }
 
@@ -20,11 +18,6 @@ impl Frontmatter {
     /// Check if a field exists in the frontmatter.
     pub fn has_field(&self, field: &str) -> bool {
         self.get(field).is_some()
-    }
-
-    /// Get a field as a string, if it is one.
-    pub fn get_str(&self, field: &str) -> Option<&str> {
-        self.get(field).and_then(|v| v.as_str())
     }
 
     /// Get a field as a string list (handles both YAML sequences and single strings).
@@ -44,8 +37,48 @@ impl Frontmatter {
     }
 }
 
+/// Return the edit that sets a frontmatter field, creating the block if needed.
+pub(crate) fn set_field_edit(
+    frontmatter: Option<&Frontmatter>,
+    field: &str,
+    value: &str,
+) -> Result<(Range<usize>, String), FrontmatterError> {
+    let parsed_value =
+        serde_yml::from_str(value).unwrap_or(serde_yml::Value::String(value.to_owned()));
+    let (range, yaml_value) = match frontmatter {
+        Some(fm) => {
+            let mut yaml_value = fm.data.clone();
+            let serde_yml::Value::Mapping(ref mut map) = yaml_value else {
+                return Err(FrontmatterError::NotMapping);
+            };
+            map.insert(field.to_owned(), parsed_value);
+            (fm.byte_range.clone(), yaml_value)
+        }
+        None => {
+            let mut map = serde_yml::Mapping::new();
+            map.insert(field.to_owned(), parsed_value);
+            (0..0, serde_yml::Value::Mapping(map))
+        }
+    };
+
+    let mut new_yaml = serde_yml::to_string(&yaml_value).map_err(|e| FrontmatterError::Yaml {
+        source: Box::new(e),
+        context: field.to_owned(),
+    })?;
+    if !new_yaml.ends_with('\n') {
+        new_yaml.push('\n');
+    }
+    Ok((
+        range,
+        match frontmatter {
+            Some(_) => format!("---\n{new_yaml}---\n"),
+            None => format!("---\n{new_yaml}---\n\n"),
+        },
+    ))
+}
+
 /// Split frontmatter from markdown source. Returns `(yaml_str, yaml_byte_range)` if present.
-fn split_frontmatter(source: &str) -> Option<(&str, std::ops::Range<usize>)> {
+fn split_frontmatter(source: &str) -> Option<(&str, Range<usize>)> {
     let trimmed = source.strip_prefix("---")?;
     if !trimmed.starts_with('\n') && !trimmed.starts_with("\r\n") {
         return None;
@@ -78,24 +111,21 @@ pub fn parse_frontmatter(source: &str) -> Result<Option<Frontmatter>, Frontmatte
             source: Box::new(e),
             context: yaml_str.chars().take(80).collect(),
         })?;
-    Ok(Some(Frontmatter {
-        raw_yaml: yaml_str.to_owned(),
-        byte_range,
-        data,
-    }))
+    Ok(Some(Frontmatter { byte_range, data }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::splice;
 
     #[test]
     fn parses_standard_frontmatter() {
         let source = "---\ntitle: Test Page\ntags: [a, b]\ndate: 2026-01-01\nsources: [raw/papers/test.md]\n---\n\n# Content";
         let fm = parse_frontmatter(source).unwrap().unwrap();
-        assert_eq!(fm.get_str("title"), Some("Test Page"));
+        assert_eq!(fm.get("title").and_then(|v| v.as_str()), Some("Test Page"));
         assert_eq!(fm.get_str_list("tags"), vec!["a", "b"]);
-        assert_eq!(fm.get_str("date"), Some("2026-01-01"));
+        assert_eq!(fm.get("date").and_then(|v| v.as_str()), Some("2026-01-01"));
         assert_eq!(fm.get_str_list("sources"), vec!["raw/papers/test.md"]);
         assert_eq!(fm.byte_range.start, 0);
         assert!(source[fm.byte_range].ends_with('\n'));
@@ -111,7 +141,7 @@ mod tests {
     fn handles_empty_optional_fields() {
         let source = "---\ntitle: Minimal\n---\n\nContent";
         let fm = parse_frontmatter(source).unwrap().unwrap();
-        assert_eq!(fm.get_str("title"), Some("Minimal"));
+        assert_eq!(fm.get("title").and_then(|v| v.as_str()), Some("Minimal"));
         assert!(!fm.has_field("tags"));
         assert!(!fm.has_field("date"));
     }
@@ -120,7 +150,10 @@ mod tests {
     fn schema_free_arbitrary_fields() {
         let source = "---\ncustom_field: hello\nnested:\n  key: value\n---\n\nContent";
         let fm = parse_frontmatter(source).unwrap().unwrap();
-        assert_eq!(fm.get_str("custom_field"), Some("hello"));
+        assert_eq!(
+            fm.get("custom_field").and_then(|v| v.as_str()),
+            Some("hello")
+        );
         assert!(fm.has_field("nested"));
     }
 
@@ -129,5 +162,39 @@ mod tests {
         let source = "---\ntitle: Test\nautolink: false\n---\n\nContent";
         let fm = parse_frontmatter(source).unwrap().unwrap();
         assert_eq!(fm.get("autolink"), Some(&serde_yml::Value::Bool(false)));
+    }
+
+    #[test]
+    fn set_field_edit_updates_mapping_frontmatter() {
+        let source = "---\ntitle: Test\n---\n\nContent";
+        let fm = parse_frontmatter(source).unwrap().unwrap();
+        let edit = set_field_edit(Some(&fm), "published", "true").unwrap();
+
+        assert_eq!(
+            splice::apply(source, &[edit]),
+            "---\ntitle: Test\npublished: true\n---\n\nContent"
+        );
+    }
+
+    #[test]
+    fn set_field_edit_creates_frontmatter() {
+        let source = "# Content\n";
+        let edit = set_field_edit(None, "owner", "alice").unwrap();
+
+        assert_eq!(
+            splice::apply(source, &[edit]),
+            "---\nowner: alice\n---\n\n# Content\n"
+        );
+    }
+
+    #[test]
+    fn set_field_edit_rejects_non_mapping_frontmatter() {
+        let source = "---\n- item\n---\n\nContent";
+        let fm = parse_frontmatter(source).unwrap().unwrap();
+
+        assert!(matches!(
+            set_field_edit(Some(&fm), "owner", "alice"),
+            Err(FrontmatterError::NotMapping)
+        ));
     }
 }

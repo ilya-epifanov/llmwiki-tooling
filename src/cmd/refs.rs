@@ -6,17 +6,13 @@ use crate::wiki::Wiki;
 /// Run `refs to <page>`: list all pages that link to the given page.
 pub fn refs_to(wiki: &Wiki, page_name: &str) -> Result<(), WikiError> {
     let page_id = PageId::from(page_name);
+    let lookup_id = wiki.canonical_id(&page_id).unwrap_or(&page_id);
     let index = LinkIndex::build(wiki)?;
 
-    let mut sources = index.inbound(&page_id);
-    sources.sort();
+    let sources = index.inbound_paths(lookup_id);
 
     for source in &sources {
-        if let Some(entry) = wiki.get(source) {
-            println!("{} -> {page_name}", entry.rel_path.display());
-        } else {
-            println!("{source} -> {page_name}");
-        }
+        println!("{} -> {page_name}", source.display());
     }
 
     if sources.is_empty() {
@@ -29,9 +25,10 @@ pub fn refs_to(wiki: &Wiki, page_name: &str) -> Result<(), WikiError> {
 /// Run `refs from <page>`: list all pages the given page links to.
 pub fn refs_from(wiki: &Wiki, page_name: &str) -> Result<(), WikiError> {
     let page_id = PageId::from(page_name);
+    let lookup_id = wiki.canonical_id(&page_id).unwrap_or(&page_id);
     let index = LinkIndex::build(wiki)?;
 
-    let outbound = index.outbound(&page_id);
+    let outbound = index.outbound(lookup_id);
 
     let mut targets: Vec<&str> = outbound.iter().map(|wl| wl.page.as_str()).collect();
     targets.sort();

@@ -1,8 +1,9 @@
-use crate::config::{MatchMode, RuleConfig, Severity, WikiConfig};
+use std::path::{Path, PathBuf};
+
+use crate::config::{MatchMode, RuleConfig, RulePredicate, Severity, WikiConfig};
 use crate::error::WikiError;
+use crate::frontmatter::Frontmatter;
 use crate::link_index::LinkIndex;
-use crate::resolve;
-use crate::walk::{is_markdown_file, wiki_walk_builder};
 use crate::wiki::Wiki;
 
 /// Severity filter for lint output.
@@ -36,6 +37,11 @@ impl LintResult {
             Severity::Off => {}
         }
     }
+
+    fn merge(&mut self, other: Self) {
+        self.errors += other.errors;
+        self.warnings += other.warnings;
+    }
 }
 
 fn should_show(severity: Severity, filter: SeverityFilter) -> bool {
@@ -54,15 +60,22 @@ pub fn lint(wiki: &Wiki, filter: SeverityFilter) -> Result<usize, WikiError> {
     let config = wiki.config();
 
     // Wiki-wide structural checks
-    if should_show(config.checks.broken_links, filter) {
-        let count = run_broken_links(wiki)?;
-        result.tally(count, config.checks.broken_links);
-    }
+    let needs_broken_links = should_show(config.checks.broken_links, filter)
+        || should_show(config.checks.unmanaged_broken_links, filter);
+    let needs_orphan_pages = should_show(config.checks.orphan_pages, filter);
+    let link_index = (needs_broken_links || needs_orphan_pages)
+        .then(|| LinkIndex::build(wiki))
+        .transpose()?;
 
-    if should_show(config.checks.orphan_pages, filter) {
-        let link_index = LinkIndex::build(wiki)?;
-        let count = run_orphan_pages(wiki, &link_index);
-        result.tally(count, config.checks.orphan_pages);
+    if let Some(index) = &link_index {
+        if needs_broken_links {
+            result.merge(run_broken_links(wiki, filter, index)?);
+        }
+
+        if needs_orphan_pages {
+            let count = run_orphan_pages(wiki, index);
+            result.tally(count, config.checks.orphan_pages);
+        }
     }
 
     if should_show(config.checks.index_coverage, filter)
@@ -107,16 +120,18 @@ fn run_rule(wiki: &Wiki, rule: &RuleConfig) -> Result<usize, WikiError> {
     match rule {
         RuleConfig::RequiredSections {
             dirs,
+            when,
             sections,
             severity,
             ..
-        } => run_required_sections(wiki, dirs, sections, *severity),
+        } => run_required_sections(wiki, dirs, when.as_ref(), sections, *severity),
         RuleConfig::RequiredFrontmatter {
             dirs,
+            when,
             fields,
             severity,
             ..
-        } => run_required_frontmatter(wiki, dirs, fields, *severity),
+        } => run_required_frontmatter(wiki, dirs, when.as_ref(), fields, *severity),
         RuleConfig::MirrorParity {
             left,
             right,
@@ -126,42 +141,61 @@ fn run_rule(wiki: &Wiki, rule: &RuleConfig) -> Result<usize, WikiError> {
         RuleConfig::CitationPattern {
             name,
             dirs,
+            when,
             pattern,
             match_in,
             match_mode,
             severity,
-        } => run_citation_pattern(wiki, name, dirs, pattern, match_in, *match_mode, *severity),
+        } => run_citation_pattern(
+            wiki,
+            name,
+            dirs,
+            when.as_ref(),
+            pattern,
+            match_in,
+            *match_mode,
+            *severity,
+        ),
     }
 }
 
-fn run_broken_links(wiki: &Wiki) -> Result<usize, WikiError> {
-    let severity = wiki.config().checks.broken_links;
-    let mut count = 0;
-    for file_path in wiki.all_scannable_files() {
-        let broken = resolve::find_broken_links(wiki, &file_path)?;
-        let source = wiki.source(&file_path)?;
-        let rel_path = wiki.rel_path(&file_path);
-        for (wl, reason) in &broken {
-            let ref_text = &source[wl.byte_range.clone()];
-            eprintln!(
-                "{severity}[broken-link]: {} in {}",
-                ref_text.trim(),
-                rel_path.display(),
-            );
-            eprintln!("  -> {reason}");
-            count += 1;
+fn run_broken_links(
+    wiki: &Wiki,
+    filter: SeverityFilter,
+    link_index: &LinkIndex,
+) -> Result<LintResult, WikiError> {
+    let mut result = LintResult::new();
+    for broken in link_index.broken_links() {
+        let severity = if wiki.is_managed_file(&broken.source_path) {
+            wiki.config().checks.broken_links
+        } else {
+            wiki.config().checks.unmanaged_broken_links
+        };
+        if !should_show(severity, filter) {
+            continue;
         }
+
+        let source = wiki.file(&broken.source_path)?.source();
+        let rel_path = wiki.rel_path(&broken.source_path);
+        let ref_text = &source[broken.wikilink.byte_range.clone()];
+        eprintln!(
+            "{severity}[broken-link]: {} in {}",
+            ref_text.trim(),
+            rel_path.display(),
+        );
+        eprintln!("  -> {}", broken.reason);
+        result.tally(1, severity);
     }
-    Ok(count)
+    Ok(result)
 }
 
 fn run_orphan_pages(wiki: &Wiki, link_index: &LinkIndex) -> usize {
     let orphans = link_index.orphans(wiki);
     for page_id in &orphans {
-        if let Some(entry) = wiki.get(page_id) {
+        if let Some(rel_path) = wiki.get(page_id) {
             eprintln!(
                 "error[orphan]: {} has no inbound wikilinks",
-                entry.rel_path.display(),
+                rel_path.display(),
             );
         }
     }
@@ -169,16 +203,18 @@ fn run_orphan_pages(wiki: &Wiki, link_index: &LinkIndex) -> usize {
 }
 
 fn run_index_coverage(wiki: &Wiki, index_path: &std::path::Path) -> Result<usize, WikiError> {
-    let index_wikilinks = wiki.wikilinks(index_path)?;
-    let referenced: std::collections::HashSet<&str> =
-        index_wikilinks.iter().map(|wl| wl.page.as_str()).collect();
+    let index_wikilinks = wiki.file(index_path)?.wikilinks();
+    let referenced: std::collections::HashSet<&str> = index_wikilinks
+        .iter()
+        .map(|wl| wiki.canonical_id(&wl.page).unwrap_or(&wl.page).as_str())
+        .collect();
 
     let mut count = 0;
-    for (page_id, entry) in wiki.pages() {
+    for (page_id, rel_path) in wiki.pages() {
         if !referenced.contains(page_id.as_str()) {
             eprintln!(
                 "error[not-in-index]: {} is not listed in index",
-                entry.rel_path.display(),
+                rel_path.display(),
             );
             count += 1;
         }
@@ -186,19 +222,51 @@ fn run_index_coverage(wiki: &Wiki, index_path: &std::path::Path) -> Result<usize
     Ok(count)
 }
 
+struct ScopedPage<'a> {
+    rel_path: &'a Path,
+    file_path: PathBuf,
+}
+
+fn scoped_pages<'a>(
+    wiki: &'a Wiki,
+    dirs: &[String],
+    when: Option<&RulePredicate>,
+) -> Result<Vec<ScopedPage<'a>>, WikiError> {
+    let mut pages = Vec::new();
+    for rel_path in wiki.pages().values() {
+        if !dirs.is_empty() && !WikiConfig::matches_dirs(rel_path, dirs) {
+            continue;
+        }
+        let file_path = wiki.abs_path(rel_path);
+        if let Some(predicate) = when
+            && !matches!(wiki.file(&file_path)?.frontmatter(), Ok(Some(fm)) if predicate_matches(predicate, fm))
+        {
+            continue;
+        }
+        pages.push(ScopedPage {
+            rel_path,
+            file_path,
+        });
+    }
+    Ok(pages)
+}
+
+fn predicate_matches(predicate: &RulePredicate, fm: &Frontmatter) -> bool {
+    fm.get_str_list(&predicate.field)
+        .iter()
+        .any(|value| *value == predicate.value)
+}
+
 fn run_required_sections(
     wiki: &Wiki,
     dirs: &[String],
+    when: Option<&RulePredicate>,
     sections: &[String],
     severity: Severity,
 ) -> Result<usize, WikiError> {
     let mut count = 0;
-    for entry in wiki.pages().values() {
-        if !WikiConfig::matches_dirs(&entry.rel_path, dirs) {
-            continue;
-        }
-        let file_path = wiki.entry_path(entry);
-        let headings = wiki.headings(&file_path)?;
+    for page in scoped_pages(wiki, dirs, when)? {
+        let headings = wiki.file(&page.file_path)?.headings();
         for required in sections {
             if !headings
                 .iter()
@@ -206,7 +274,7 @@ fn run_required_sections(
             {
                 eprintln!(
                     "{severity}[missing-section]: {} is missing '## {required}'",
-                    entry.rel_path.display(),
+                    page.rel_path.display(),
                 );
                 count += 1;
             }
@@ -218,22 +286,19 @@ fn run_required_sections(
 fn run_required_frontmatter(
     wiki: &Wiki,
     dirs: &[String],
+    when: Option<&RulePredicate>,
     fields: &[String],
     severity: Severity,
 ) -> Result<usize, WikiError> {
     let mut count = 0;
-    for entry in wiki.pages().values() {
-        if !WikiConfig::matches_dirs(&entry.rel_path, dirs) {
-            continue;
-        }
-        let file_path = wiki.entry_path(entry);
-        match wiki.frontmatter(&file_path)? {
+    for page in scoped_pages(wiki, dirs, when)? {
+        match wiki.file(&page.file_path)?.frontmatter() {
             Ok(Some(fm)) => {
                 for field in fields {
                     if !fm.has_field(field) {
                         eprintln!(
                             "{severity}[missing-frontmatter]: {} is missing '{field}'",
-                            entry.rel_path.display(),
+                            page.rel_path.display(),
                         );
                         count += 1;
                     }
@@ -242,14 +307,14 @@ fn run_required_frontmatter(
             Ok(None) => {
                 eprintln!(
                     "{severity}[no-frontmatter]: {} has no frontmatter",
-                    entry.rel_path.display(),
+                    page.rel_path.display(),
                 );
                 count += 1;
             }
             Err(e) => {
                 eprintln!(
                     "{severity}[bad-frontmatter]: {}: {e}",
-                    entry.rel_path.display(),
+                    page.rel_path.display(),
                 );
                 count += 1;
             }
@@ -290,21 +355,18 @@ fn run_mirror_parity(
 
 fn collect_md_stems(
     wiki: &Wiki,
-    dir: &std::path::Path,
+    dir: &Path,
 ) -> Result<std::collections::HashSet<String>, WikiError> {
     let mut stems = std::collections::HashSet::new();
     if !dir.is_dir() {
         return Ok(stems);
     }
-    for entry in wiki_walk_builder(dir, wiki.root().path(), &wiki.config().ignore)?.build() {
-        let entry = entry.map_err(|e| WikiError::Walk {
-            path: dir.to_path_buf(),
-            source: e,
-        })?;
-        let path = entry.path();
-        if is_markdown_file(path)
-            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-        {
+    for path in wiki
+        .scannable_files()
+        .iter()
+        .filter(|path| path.starts_with(dir))
+    {
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
             stems.insert(stem.to_owned());
         }
     }
@@ -319,7 +381,7 @@ enum MatchDirCache {
 }
 
 impl MatchDirCache {
-    fn load(wiki: &Wiki, dir: &std::path::Path, mode: MatchMode) -> Result<Self, WikiError> {
+    fn load(wiki: &Wiki, dir: &Path, mode: MatchMode) -> Result<Self, WikiError> {
         if !dir.is_dir() {
             return Ok(match mode {
                 MatchMode::Content => Self::Contents(Vec::new()),
@@ -328,24 +390,13 @@ impl MatchDirCache {
         }
         let mut contents = Vec::new();
         let mut stems = std::collections::HashSet::new();
-        for entry in wiki_walk_builder(dir, wiki.root().path(), &wiki.config().ignore)?.build() {
-            let entry = entry.map_err(|e| WikiError::Walk {
-                path: dir.to_path_buf(),
-                source: e,
-            })?;
-            let path = entry.path();
-            if !is_markdown_file(path) {
-                continue;
-            }
+        for path in wiki
+            .scannable_files()
+            .iter()
+            .filter(|path| path.starts_with(dir))
+        {
             match mode {
-                MatchMode::Content => {
-                    let content =
-                        std::fs::read_to_string(path).map_err(|e| WikiError::ReadFile {
-                            path: path.to_path_buf(),
-                            source: e,
-                        })?;
-                    contents.push(content);
-                }
+                MatchMode::Content => contents.push(wiki.file(path)?.source().to_owned()),
                 MatchMode::Filename => {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         stems.insert(stem.to_lowercase());
@@ -372,6 +423,7 @@ fn run_citation_pattern(
     wiki: &Wiki,
     name: &str,
     dirs: &[String],
+    when: Option<&RulePredicate>,
     pattern: &str,
     match_in: &str,
     match_mode: MatchMode,
@@ -384,12 +436,8 @@ fn run_citation_pattern(
 
     let mut count = 0;
 
-    for entry in wiki.pages().values() {
-        if !WikiConfig::matches_dirs(&entry.rel_path, dirs) {
-            continue;
-        }
-        let file_path = wiki.entry_path(entry);
-        let source = wiki.source(&file_path)?;
+    for page in scoped_pages(wiki, dirs, when)? {
+        let source = wiki.file(&page.file_path)?.source();
 
         for cap in regex.captures_iter(source) {
             let Some(id) = cap.name("id").map(|m| m.as_str()) else {
@@ -399,7 +447,7 @@ fn run_citation_pattern(
             if !cache.contains(id) {
                 eprintln!(
                     "{severity}[{name}]: {} references '{id}' but no matching page in {match_in}",
-                    entry.rel_path.display(),
+                    page.rel_path.display(),
                 );
                 count += 1;
             }

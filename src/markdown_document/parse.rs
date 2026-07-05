@@ -2,39 +2,8 @@ use std::ops::Range;
 
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
+use super::{ClassifiedRange, MarkdownLinkDestination, RangeKind};
 use crate::page::{BlockId, Heading, PageId, WikilinkFragment, WikilinkOccurrence};
-
-/// Classification of a byte range within a markdown source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RangeKind {
-    /// Regular text where bare mentions should be detected.
-    Prose,
-    /// Heading content — bare mentions should not be linked here.
-    Heading,
-    /// YAML frontmatter block.
-    Frontmatter,
-    /// Fenced or indented code block.
-    CodeBlock,
-    /// Inline code span.
-    InlineCode,
-    /// An existing wikilink `[[...]]`.
-    Wikilink,
-    /// An embed `![[...]]`.
-    Embed,
-    /// An autolink or URL.
-    Url,
-    /// Raw HTML block.
-    HtmlBlock,
-    /// HTML inline tag.
-    HtmlInline,
-}
-
-/// A byte range within the source classified by its structural role.
-#[derive(Debug, Clone)]
-pub struct ClassifiedRange {
-    pub kind: RangeKind,
-    pub byte_range: Range<usize>,
-}
 
 fn parser_options() -> Options {
     Options::ENABLE_WIKILINKS
@@ -48,7 +17,7 @@ fn parser_options() -> Options {
 ///
 /// Ranges tagged `Prose` are suitable for bare mention scanning.
 /// Non-prose ranges (headings, code, frontmatter, wikilinks, etc.) must be left untouched.
-pub fn classify_ranges(source: &str) -> Vec<ClassifiedRange> {
+pub(super) fn classify_ranges(source: &str) -> Vec<ClassifiedRange> {
     let parser = Parser::new_ext(source, parser_options());
     let offset_iter = parser.into_offset_iter();
 
@@ -179,23 +148,23 @@ pub fn classify_ranges(source: &str) -> Vec<ClassifiedRange> {
 }
 
 /// Extract all wikilink occurrences from the source.
-pub fn extract_wikilinks(source: &str) -> Vec<WikilinkOccurrence> {
+pub(super) fn extract_wikilinks(source: &str) -> Vec<WikilinkOccurrence> {
     let parser = Parser::new_ext(source, parser_options());
     let offset_iter = parser.into_offset_iter();
     let mut wikilinks = Vec::new();
 
     for (event, range) in offset_iter {
-        let (dest_url, is_embed) = match &event {
+        let dest_url = match &event {
             Event::Start(Tag::Link {
                 link_type: LinkType::WikiLink { .. },
                 dest_url,
                 ..
-            }) => (dest_url.as_ref(), false),
-            Event::Start(Tag::Image {
+            })
+            | Event::Start(Tag::Image {
                 link_type: LinkType::WikiLink { .. },
                 dest_url,
                 ..
-            }) => (dest_url.as_ref(), true),
+            }) => dest_url.as_ref(),
             _ => continue,
         };
 
@@ -214,7 +183,6 @@ pub fn extract_wikilinks(source: &str) -> Vec<WikilinkOccurrence> {
         wikilinks.push(WikilinkOccurrence {
             page: PageId::from(page_str),
             fragment,
-            is_embed,
             byte_range: range,
         });
     }
@@ -222,8 +190,105 @@ pub fn extract_wikilinks(source: &str) -> Vec<WikilinkOccurrence> {
     wikilinks
 }
 
+/// Extract standard Markdown link destinations from the source.
+pub(super) fn extract_markdown_links(source: &str) -> Vec<MarkdownLinkDestination> {
+    let mut links = Vec::new();
+
+    for (event, range) in Parser::new_ext(source, parser_options()).into_offset_iter() {
+        let dest_url = match event {
+            Event::Start(Tag::Link {
+                link_type: LinkType::Inline,
+                dest_url,
+                ..
+            })
+            | Event::Start(Tag::Image {
+                link_type: LinkType::Inline,
+                dest_url,
+                ..
+            }) => dest_url,
+            _ => continue,
+        };
+        if let Some(dest_range) = inline_destination_range(&source[range.clone()], &dest_url) {
+            links.push(MarkdownLinkDestination {
+                destination: dest_url.to_string(),
+                byte_range: range.start + dest_range.start..range.start + dest_range.end,
+            });
+        }
+    }
+
+    links.extend(markdown_reference_definitions(source));
+    links
+}
+
+fn inline_destination_range(markup: &str, dest_url: &str) -> Option<Range<usize>> {
+    let mut start = markup.find("](")? + 2;
+    while markup
+        .as_bytes()
+        .get(start)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        start += 1;
+    }
+    if markup.as_bytes().get(start) == Some(&b'<') {
+        let inner_start = start + 1;
+        let inner_end = markup[inner_start..].find('>')? + inner_start;
+        return (&markup[inner_start..inner_end] == dest_url).then_some(inner_start..inner_end);
+    }
+    let end = markup[start..]
+        .find(|c: char| c == ')' || c.is_whitespace())
+        .map(|offset| start + offset)?;
+    (&markup[start..end] == dest_url).then_some(start..end)
+}
+
+fn markdown_reference_definitions(source: &str) -> Vec<MarkdownLinkDestination> {
+    let mut links = Vec::new();
+    let mut line_start = 0;
+    for line in source.split_inclusive('\n') {
+        if let Some((byte_range, destination)) = reference_definition_dest(line, line_start) {
+            links.push(MarkdownLinkDestination {
+                destination: destination.to_owned(),
+                byte_range,
+            });
+        }
+        line_start += line.len();
+    }
+    links
+}
+
+fn reference_definition_dest(line: &str, line_start: usize) -> Option<(Range<usize>, &str)> {
+    let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+    if indent > 3 {
+        return None;
+    }
+    let rest = &line[indent..];
+    let label_end = rest.find("]:")?;
+    if !rest.starts_with('[') {
+        return None;
+    }
+    let mut dest_start = indent + label_end + 2;
+    while line
+        .as_bytes()
+        .get(dest_start)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        dest_start += 1;
+    }
+    if line.as_bytes().get(dest_start) == Some(&b'<') {
+        let inner_start = dest_start + 1;
+        let inner_end = line[inner_start..].find('>')? + inner_start;
+        let dest = &line[inner_start..inner_end];
+        return Some((line_start + inner_start..line_start + inner_end, dest));
+    }
+    let dest_end = line[dest_start..]
+        .find(char::is_whitespace)
+        .map(|offset| dest_start + offset)
+        .unwrap_or(line.len());
+    let dest = &line[dest_start..dest_end];
+    (!dest.is_empty()).then_some((line_start + dest_start..line_start + dest_end, dest))
+}
+
 /// Extract all headings from the source.
-pub fn extract_headings(source: &str) -> Vec<Heading> {
+pub(super) fn extract_headings(source: &str) -> Vec<Heading> {
     let parser = Parser::new_ext(source, parser_options());
     let offset_iter = parser.into_offset_iter();
     let mut headings = Vec::new();
@@ -256,7 +321,7 @@ pub fn extract_headings(source: &str) -> Vec<Heading> {
 }
 
 /// Extract block IDs (lines like `^block-id`) from the source.
-pub fn extract_block_ids(source: &str) -> Vec<BlockId> {
+pub(super) fn extract_block_ids(source: &str) -> Vec<BlockId> {
     // Block IDs appear as `^identifier` at the end of a line, typically after content
     // or on their own line. We scan the raw source since pulldown-cmark treats these
     // as regular text.
@@ -375,7 +440,6 @@ mod tests {
             wikilinks[0].fragment,
             Some(WikilinkFragment::Block(BlockId::from("method-comparison")))
         );
-        assert!(!wikilinks[0].is_embed);
     }
 
     #[test]
@@ -383,7 +447,7 @@ mod tests {
         let source = "![[post-training#^method-comparison]]";
         let wikilinks = extract_wikilinks(source);
         assert_eq!(wikilinks.len(), 1);
-        assert!(wikilinks[0].is_embed);
+        assert_eq!(wikilinks[0].page.as_str(), "post-training");
     }
 
     #[test]

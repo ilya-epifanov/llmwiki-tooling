@@ -3,8 +3,8 @@ use std::ops::Range;
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 
+use crate::markdown_document::{ClassifiedRange, RangeKind};
 use crate::page::PageId;
-use crate::parse::{ClassifiedRange, RangeKind};
 use crate::splice;
 
 /// A bare concept mention found in prose that should be a wikilink.

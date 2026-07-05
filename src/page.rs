@@ -60,7 +60,6 @@ pub enum WikilinkFragment {
 pub struct WikilinkOccurrence {
     pub page: PageId,
     pub fragment: Option<WikilinkFragment>,
-    pub is_embed: bool,
     pub byte_range: Range<usize>,
 }
 

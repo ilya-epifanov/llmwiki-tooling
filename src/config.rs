@@ -55,7 +55,7 @@ pub struct WikiConfig {
     pub linking: LinkingConfig,
     /// Wiki-wide structural check severities.
     pub checks: ChecksConfig,
-    /// Parameterized rules scoped to directories.
+    /// Parameterized rules scoped to directories and/or frontmatter predicates.
     pub rules: Vec<RuleConfig>,
 }
 
@@ -68,6 +68,7 @@ pub struct DirectoryConfig {
     pub autolink: bool,
 }
 
+pub(crate) const EXAMPLE_CONFIG: &str = include_str!("example-config.toml");
 const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     ".agents/",
     ".claude/",
@@ -129,20 +130,59 @@ pub struct LinkingConfig {
 #[derive(Debug, Clone)]
 pub struct ChecksConfig {
     pub broken_links: Severity,
+    pub unmanaged_broken_links: Severity,
     pub orphan_pages: Severity,
     pub index_coverage: Severity,
 }
 
-/// A parameterized rule scoped to specific directories.
+/// Frontmatter predicate that restricts a rule to matching pages.
+#[derive(Debug, Clone)]
+pub struct RulePredicate {
+    pub field: String,
+    pub value: String,
+}
+
+impl RulePredicate {
+    fn parse(expr: &str) -> Result<Self, ConfigError> {
+        let Some((field, value)) = expr.split_once("==") else {
+            return Err(ConfigError::Validation(format!(
+                "unsupported rule predicate '{expr}'; expected `field == value`"
+            )));
+        };
+        let field = field.trim();
+        let value = value.trim();
+        if field.is_empty() || value.is_empty() {
+            return Err(ConfigError::Validation(format!(
+                "unsupported rule predicate '{expr}'; expected `field == value`"
+            )));
+        }
+        Ok(Self {
+            field: field.to_owned(),
+            value: strip_quotes(value).to_owned(),
+        })
+    }
+}
+
+fn strip_quotes(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .unwrap_or(value)
+}
+
+/// A parameterized rule scoped to specific directories and/or frontmatter.
 #[derive(Debug, Clone)]
 pub enum RuleConfig {
     RequiredSections {
         dirs: Vec<String>,
+        when: Option<RulePredicate>,
         sections: Vec<String>,
         severity: Severity,
     },
     RequiredFrontmatter {
         dirs: Vec<String>,
+        when: Option<RulePredicate>,
         fields: Vec<String>,
         severity: Severity,
     },
@@ -154,6 +194,7 @@ pub enum RuleConfig {
     CitationPattern {
         name: String,
         dirs: Vec<String>,
+        when: Option<RulePredicate>,
         pattern: String,
         match_in: String,
         match_mode: MatchMode,
@@ -201,6 +242,8 @@ impl<'de> Deserialize<'de> for MatchMode {
 #[derive(Deserialize)]
 struct RawConfig {
     index: Option<String>,
+    #[serde(default)]
+    verbatim: Vec<String>,
     #[serde(default)]
     directories: Vec<RawDirectoryConfig>,
     #[serde(default)]
@@ -258,6 +301,8 @@ struct RawChecksConfig {
     #[serde(default)]
     broken_links: Option<Severity>,
     #[serde(default)]
+    unmanaged_broken_links: Option<Severity>,
+    #[serde(default)]
     orphan_pages: Option<Severity>,
     #[serde(default)]
     index_coverage: Option<Severity>,
@@ -268,14 +313,20 @@ struct RawChecksConfig {
 enum RawRuleConfig {
     #[serde(rename = "required-sections")]
     RequiredSections {
+        #[serde(default)]
         dirs: Vec<String>,
+        #[serde(default)]
+        when: Option<String>,
         sections: Vec<String>,
         #[serde(default)]
         severity: Option<Severity>,
     },
     #[serde(rename = "required-frontmatter")]
     RequiredFrontmatter {
+        #[serde(default)]
         dirs: Vec<String>,
+        #[serde(default)]
+        when: Option<String>,
         fields: Vec<String>,
         #[serde(default)]
         severity: Option<Severity>,
@@ -290,7 +341,10 @@ enum RawRuleConfig {
     #[serde(rename = "citation-pattern")]
     CitationPattern {
         name: String,
+        #[serde(default)]
         dirs: Vec<String>,
+        #[serde(default)]
+        when: Option<String>,
         #[serde(default)]
         pattern: Option<String>,
         #[serde(default)]
@@ -354,6 +408,7 @@ impl WikiConfig {
             },
             checks: ChecksConfig {
                 broken_links: Severity::Error,
+                unmanaged_broken_links: Severity::Warn,
                 orphan_pages: Severity::Error,
                 index_coverage: Severity::Error,
             },
@@ -389,9 +444,11 @@ impl WikiConfig {
         // Sort most-specific first (longest path) for resolution
         directories.sort_by_key(|dir| std::cmp::Reverse(dir.path.len()));
 
+        let mut ignore_patterns = raw.ignore.patterns;
+        ignore_patterns.extend(raw.verbatim);
         let ignore = IgnoreConfig {
             default_patterns: raw.ignore.default_patterns,
-            patterns: raw.ignore.patterns,
+            patterns: ignore_patterns,
         };
         validate_ignore_patterns(&ignore)?;
 
@@ -402,6 +459,7 @@ impl WikiConfig {
 
         let checks = ChecksConfig {
             broken_links: raw.checks.broken_links.unwrap_or(Severity::Error),
+            unmanaged_broken_links: raw.checks.unmanaged_broken_links.unwrap_or(Severity::Warn),
             orphan_pages: raw.checks.orphan_pages.unwrap_or(Severity::Error),
             index_coverage: raw.checks.index_coverage.unwrap_or(Severity::Error),
         };
@@ -438,26 +496,15 @@ impl WikiConfig {
     /// Get the directory config that applies to a given relative path.
     /// Returns the most-specific matching directory (longest prefix match).
     pub fn directory_for(&self, rel_path: &Path) -> Option<&DirectoryConfig> {
-        let rel_str = rel_path.to_str()?;
         // Directories are sorted most-specific first
         self.directories
             .iter()
-            .find(|d| rel_str.starts_with(&d.path) || d.path == ".")
-    }
-
-    /// Check if a page at the given relative path should be auto-linked.
-    pub fn is_autolink_dir(&self, rel_path: &Path) -> bool {
-        self.directory_for(rel_path)
-            .map(|d| d.autolink)
-            .unwrap_or(false)
+            .find(|d| path_matches_prefix(rel_path, &d.path))
     }
 
     /// Check if a relative path matches a directory prefix from a rule's `dirs` list.
     pub fn matches_dirs(rel_path: &Path, dirs: &[String]) -> bool {
-        let Some(rel_str) = rel_path.to_str() else {
-            return false;
-        };
-        dirs.iter().any(|d| rel_str.starts_with(d.as_str()))
+        dirs.iter().any(|d| path_matches_prefix(rel_path, d))
     }
 
     /// All mirror-parity rules' `right` paths (non-wiki directories used for parity checks).
@@ -499,19 +546,23 @@ fn convert_rule(raw: RawRuleConfig) -> Result<RuleConfig, ConfigError> {
     match raw {
         RawRuleConfig::RequiredSections {
             dirs,
+            when,
             sections,
             severity,
         } => Ok(RuleConfig::RequiredSections {
             dirs: dirs.into_iter().map(|d| normalize_path(&d)).collect(),
+            when: parse_when(when)?,
             sections,
             severity: severity.unwrap_or(Severity::Error),
         }),
         RawRuleConfig::RequiredFrontmatter {
             dirs,
+            when,
             fields,
             severity,
         } => Ok(RuleConfig::RequiredFrontmatter {
             dirs: dirs.into_iter().map(|d| normalize_path(&d)).collect(),
+            when: parse_when(when)?,
             fields,
             severity: severity.unwrap_or(Severity::Error),
         }),
@@ -527,6 +578,7 @@ fn convert_rule(raw: RawRuleConfig) -> Result<RuleConfig, ConfigError> {
         RawRuleConfig::CitationPattern {
             name,
             dirs,
+            when,
             pattern,
             preset,
             match_in,
@@ -553,6 +605,7 @@ fn convert_rule(raw: RawRuleConfig) -> Result<RuleConfig, ConfigError> {
             Ok(RuleConfig::CitationPattern {
                 name,
                 dirs: dirs.into_iter().map(|d| normalize_path(&d)).collect(),
+                when: parse_when(when)?,
                 pattern: resolved_pattern,
                 match_in: normalize_path(&match_in),
                 match_mode: resolved_mode,
@@ -560,6 +613,14 @@ fn convert_rule(raw: RawRuleConfig) -> Result<RuleConfig, ConfigError> {
             })
         }
     }
+}
+
+fn parse_when(when: Option<String>) -> Result<Option<RulePredicate>, ConfigError> {
+    when.as_deref().map(RulePredicate::parse).transpose()
+}
+
+fn path_matches_prefix(rel_path: &Path, prefix: &str) -> bool {
+    prefix == "." || rel_path.starts_with(Path::new(prefix))
 }
 
 /// Strip trailing slashes for consistent prefix matching.
@@ -583,6 +644,7 @@ path = "wiki"
         assert_eq!(config.directories[0].path, "wiki");
         assert!(config.directories[0].autolink);
         assert_eq!(config.checks.broken_links, Severity::Error);
+        assert_eq!(config.checks.unmanaged_broken_links, Severity::Warn);
     }
 
     #[test]
@@ -603,6 +665,7 @@ autolink_field = "auto"
 
 [checks]
 broken_links = "error"
+unmanaged_broken_links = "warn"
 orphan_pages = "warn"
 index_coverage = "off"
 
@@ -640,6 +703,7 @@ severity = "warn"
         assert_eq!(config.index.as_deref(), Some("contents.md"));
         assert!(config.linking.exclude.contains("the"));
         assert_eq!(config.linking.autolink_field, "auto");
+        assert_eq!(config.checks.unmanaged_broken_links, Severity::Warn);
         assert_eq!(config.checks.orphan_pages, Severity::Warn);
         assert_eq!(config.checks.index_coverage, Severity::Off);
         assert_eq!(config.rules.len(), 4);
@@ -649,6 +713,12 @@ severity = "warn"
         assert!(!config.directories[0].autolink);
         assert_eq!(config.directories[1].path, "wiki");
         assert!(config.directories[1].autolink);
+    }
+
+    #[test]
+    fn example_config_is_parseable() {
+        let raw: RawConfig = toml::from_str(EXAMPLE_CONFIG).unwrap();
+        WikiConfig::from_raw(raw).unwrap();
     }
 
     #[test]
@@ -672,14 +742,23 @@ severity = "warn"
             },
             checks: ChecksConfig {
                 broken_links: Severity::Error,
+                unmanaged_broken_links: Severity::Warn,
                 orphan_pages: Severity::Error,
                 index_coverage: Severity::Error,
             },
             rules: Vec::new(),
         };
 
-        assert!(config.is_autolink_dir(Path::new("wiki/concepts/GRPO.md")));
-        assert!(!config.is_autolink_dir(Path::new("wiki/papers/deepseek.md")));
+        assert!(
+            config
+                .directory_for(Path::new("wiki/concepts/GRPO.md"))
+                .is_some_and(|dir| dir.autolink)
+        );
+        assert!(
+            config
+                .directory_for(Path::new("wiki/papers/deepseek.md"))
+                .is_some_and(|dir| !dir.autolink)
+        );
     }
 
     #[test]
@@ -734,6 +813,26 @@ match_in = "wiki"
     }
 
     #[test]
+    fn parses_rule_when_predicate() {
+        let toml = r#"
+[[rules]]
+check = "required-frontmatter"
+when = "type == concept"
+fields = ["owner"]
+"#;
+        let raw: RawConfig = toml::from_str(toml).unwrap();
+        let config = WikiConfig::from_raw(raw).unwrap();
+
+        let RuleConfig::RequiredFrontmatter { dirs, when, .. } = &config.rules[0] else {
+            panic!("expected required-frontmatter rule");
+        };
+        assert!(dirs.is_empty());
+        let when = when.as_ref().unwrap();
+        assert_eq!(when.field, "type");
+        assert_eq!(when.value, "concept");
+    }
+
+    #[test]
     fn parses_ignore_config() {
         let toml = r#"
 [ignore]
@@ -749,6 +848,22 @@ patterns = ["generated/"]
             config.ignore.effective_patterns().collect::<Vec<_>>(),
             ["generated/"]
         );
+    }
+
+    #[test]
+    fn verbatim_patterns_are_additive_ignores() {
+        let toml = r#"
+verbatim = ["raw-inputs/", "scraped/"]
+
+[ignore]
+patterns = ["generated/"]
+"#;
+        let raw: RawConfig = toml::from_str(toml).unwrap();
+        let config = WikiConfig::from_raw(raw).unwrap();
+
+        assert!(config.ignore.patterns.contains(&"generated/".to_owned()));
+        assert!(config.ignore.patterns.contains(&"raw-inputs/".to_owned()));
+        assert!(config.ignore.patterns.contains(&"scraped/".to_owned()));
     }
 
     #[test]
@@ -775,6 +890,10 @@ patterns = ["!.claude/"]
         assert!(!WikiConfig::matches_dirs(
             Path::new("wiki/papers/foo.md"),
             &["wiki/concepts".to_owned()]
+        ));
+        assert!(!WikiConfig::matches_dirs(
+            Path::new("wikiology/foo.md"),
+            &["wiki".to_owned()]
         ));
     }
 }

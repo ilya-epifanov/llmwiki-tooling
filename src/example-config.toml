@@ -1,0 +1,181 @@
+# wiki.toml — Complete configuration reference
+#
+# Every available option with explanatory comments.
+# In practice, only include settings that differ from defaults.
+
+# Index file path, relative to wiki root.
+# Scanned for wikilinks (index-coverage check) but NOT treated as a managed page.
+# Default: "index.md". Set to "" to disable index coverage.
+index = "index.md"
+
+# Verbatim directories/files are skipped by link scans, rewrites, and lint checks.
+# Use for raw inputs, generated output, and other markdown that should remain unchecked.
+# Same gitignore-style syntax as [ignore].patterns. Default: []
+verbatim = ["raw-inputs/", "scraped/"]
+
+# Declare managed wiki page directories. Each entry is recursive
+# (includes all subdirectories). Managed pages get rules, orphans, index coverage,
+# and auto-link candidate governance. Non-verbatim Markdown outside these directories
+# is unmanaged: link-aware, but not governed. Verbatim Markdown is skipped entirely.
+#
+# When multiple entries overlap (parent + child), the most-specific path wins
+# for per-page settings. This is the intended override mechanism:
+#   path = "wiki"          (parent, sets defaults for all of wiki/)
+#   path = "wiki/papers"   (child, overrides settings for wiki/papers/)
+#
+# If no [[directories]] are declared:
+#   Defaults to "wiki/" with autolink = true.
+#
+# If ANY [[directories]] are declared, the default is replaced entirely.
+# autolink: pages here feed bare-mention auto-linking.
+# When true, filename stems become patterns for `wiki links check`.
+# Default: true
+[[directories]]
+path = "wiki"
+autolink = true
+
+# Long, specific names are poor auto-link patterns — disable.
+[[directories]]
+path = "wiki/papers"
+autolink = false
+
+[[directories]]
+path = "wiki/topics"
+autolink = false
+
+[ignore]
+# Built-in non-wiki tool directory patterns are enabled by default:
+# .agents/, .claude/, .cursor/, .windsurf/, .pi/, etc.
+# Cargo-style: set default_patterns = false to discard them all.
+# Default: true
+default_patterns = true
+
+# Extra gitignore-style patterns, relative to the wiki root.
+# Additive with defaults; cannot subtract individual default patterns.
+# Default: []
+patterns = ["generated/", "scratch/**/*.md"]
+
+[linking]
+# Page names to never auto-link, even in autolink=true directories.
+# Default: []
+exclude = ["the", "a", "an"]
+
+# Frontmatter field that pages can set to false to opt out of auto-linking.
+# Default: "autolink"
+autolink_field = "autolink"
+
+# Wiki-wide structural checks. These apply to all pages regardless of directory.
+# Values: "error" (causes exit code 2), "warn" (prints but exits 0), "off"
+[checks]
+# Managed-page [[wikilinks]] must resolve to a non-verbatim Markdown file by filename stem or aliases.
+# Fragment references ([[page#heading]], [[page#^block]]) are also validated.
+# Default: "error"
+broken_links = "error"
+
+# Unmanaged-page [[wikilinks]] get best-effort checking with separate severity.
+# Verbatim pages are skipped and never emit link warnings/errors.
+# Default: "warn"
+unmanaged_broken_links = "warn"
+
+# Every wiki page must have at least one inbound [[wikilink]] from another page.
+# Default: "error"
+orphan_pages = "error"
+
+# Every wiki page must be referenced via [[wikilink]] in the index file.
+# Only active if `index` is set and the file exists.
+# Default: "error"
+index_coverage = "error"
+
+# Parameterized rules scoped to directories, frontmatter predicates, or both.
+# Each rule has a `check` type and a `severity` ("error", "warn", or "off").
+#
+# The `dirs` field uses path-prefix matching:
+#   dirs = ["wiki"] matches any page under wiki/ (including subdirectories)
+#   dirs = ["wiki/concepts"] matches only pages under wiki/concepts/
+# The optional `when` field matches frontmatter equality, e.g. `when = "type == concept"`.
+# --- Required sections ---
+# Pages in the specified directories must contain these ## headings.
+
+[[rules]]
+check = "required-sections"
+dirs = ["wiki/concepts"]
+sections = ["See also", "Viability check"]
+severity = "error"
+
+[[rules]]
+check = "required-sections"
+dirs = ["wiki/topics"]
+sections = ["See also"]
+severity = "warn"
+
+# --- Required frontmatter fields ---
+# Pages in the specified directories must have these YAML frontmatter fields.
+
+[[rules]]
+check = "required-frontmatter"
+dirs = ["wiki/concepts", "wiki/topics"]
+fields = ["title", "tags", "date"]
+severity = "error"
+
+# Predicate-scoped rule: applies to pages whose frontmatter has type: concept.
+[[rules]]
+check = "required-frontmatter"
+when = "type == concept"
+fields = ["owner"]
+severity = "warn"
+
+[[rules]]
+check = "required-frontmatter"
+dirs = ["wiki/papers"]
+fields = ["title", "tags", "date", "sources"]
+severity = "error"
+
+# --- Mirror parity ---
+# Two directories must contain matching filenames (by stem, ignoring extension).
+# Useful for raw-source / processed-page pairs.
+# Note: `right` does NOT need to be a declared [[directories]] entry.
+
+[[rules]]
+check = "mirror-parity"
+left = "wiki/papers"
+right = "raw/papers"
+severity = "error"
+
+# --- Citation patterns ---
+# Detect references in prose that should have corresponding wiki pages.
+#
+# Each pattern has a regex with a named capture group `id`.
+# `match_in`: which directory to search for matching pages.
+# `match_mode`:
+#   "content"  - search page file contents for the captured ID string (default)
+#   "filename" - check if a page with the captured ID as filename exists
+#
+# Use `preset` instead of `pattern` for built-in patterns:
+#   "bold-method-year" - matches **MethodName** (Author, YEAR), checks filenames
+
+[[rules]]
+check = "citation-pattern"
+name = "arxiv"
+dirs = ["wiki/concepts", "wiki/topics"]
+pattern = 'arxiv\.org/abs/(?P<id>\d{4}\.\d{4,5})'
+match_in = "wiki/papers"
+match_mode = "content"
+severity = "warn"
+
+# Preset-based: no regex needed, preset bundles pattern + match_mode.
+[[rules]]
+check = "citation-pattern"
+name = "bold-method"
+preset = "bold-method-year"
+dirs = ["wiki/concepts", "wiki/topics"]
+match_in = "wiki/papers"
+severity = "warn"
+
+[[rules]]
+check = "citation-pattern"
+name = "doi"
+dirs = ["wiki"]
+pattern = 'doi\.org/(?P<id>10\.\d{4,}/[^\s)]+)'
+match_in = "wiki/papers"
+match_mode = "content"
+severity = "warn"

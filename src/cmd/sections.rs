@@ -1,6 +1,6 @@
 use crate::config::WikiConfig;
+use crate::edit_plan::{DryRunOutput, EditPlan, EditPlanMode};
 use crate::error::WikiError;
-use crate::splice;
 use crate::wiki::Wiki;
 
 /// Run `sections rename`: rename a heading across the wiki, including fragment references.
@@ -11,25 +11,24 @@ pub fn rename(
     dirs: &Option<Vec<String>>,
     write: bool,
 ) -> Result<usize, WikiError> {
-    // Collect all changes first (read phase)
-    let mut changes: super::FileEdits = Vec::new();
+    let mut plan = EditPlan::new();
 
-    for file_path in wiki.all_scannable_files() {
-        let rel_path = wiki.rel_path(&file_path);
+    plan.add_scannable_edits(wiki, |file_path, source| {
+        let rel_path = wiki.rel_path(file_path);
 
         // If dirs filter is set, skip files outside those directories
         if let Some(dir_filter) = dirs
             && !WikiConfig::matches_dirs(rel_path, dir_filter)
         {
-            continue;
+            return Ok(Vec::new());
         }
 
-        let source = wiki.source(&file_path)?;
         let mut file_edits = Vec::new();
 
+        let document = wiki.file(file_path)?;
+
         // Find heading occurrences to rename
-        let headings = wiki.headings(&file_path)?;
-        for h in headings {
+        for h in document.headings() {
             if h.text.eq_ignore_ascii_case(old_name) {
                 // Replace just the heading text within the heading range.
                 // The heading range includes `## ` prefix. Find the text portion.
@@ -43,8 +42,7 @@ pub fn rename(
         }
 
         // Find wikilink heading fragment references: [[page#Old Name]] -> [[page#New Name]]
-        let wikilinks = wiki.wikilinks(&file_path)?;
-        for wl in wikilinks {
+        for wl in document.wikilinks() {
             if let Some(crate::page::WikilinkFragment::Heading(ref heading)) = wl.fragment
                 && heading.as_str().eq_ignore_ascii_case(old_name)
             {
@@ -56,30 +54,14 @@ pub fn rename(
             }
         }
 
-        if !file_edits.is_empty() {
-            changes.push((file_path, source.to_owned(), file_edits));
-        }
-    }
+        Ok(file_edits)
+    })?;
 
-    // Apply changes (write phase)
-    let mut total_changes = 0;
-    for (file_path, source, file_edits) in changes {
-        let rel_path = wiki.rel_path(&file_path);
-
-        if write {
-            let result = splice::apply(&source, &file_edits);
-            wiki.write_file(&file_path, &result)?;
-            println!(
-                "{}: renamed {} occurrence(s)",
-                rel_path.display(),
-                file_edits.len()
-            );
-        } else {
-            print!("{}", splice::diff(&source, rel_path, &file_edits));
-        }
-
-        total_changes += file_edits.len();
-    }
+    let total_changes = plan.edit_count();
+    plan.execute(
+        wiki,
+        EditPlanMode::from_write_flag(write, DryRunOutput::Diff),
+    )?;
 
     Ok(total_changes)
 }

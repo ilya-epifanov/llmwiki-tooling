@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::PathBuf;
 
 use crate::page::PageId;
@@ -84,7 +85,7 @@ pub enum WikiError {
         source: ignore::Error,
     },
 
-    #[error("parsing frontmatter in '{path}'")]
+    #[error("frontmatter in '{path}'")]
     Frontmatter {
         path: PathBuf,
         #[source]
@@ -94,9 +95,36 @@ pub enum WikiError {
     #[error("page not found: {0}")]
     PageNotFound(PageId),
 
+    #[error("target path already exists: '{path}'")]
+    TargetPathExists { path: PathBuf },
+
+    #[error("path is outside wiki root: '{path}'")]
+    PathOutsideRoot { path: PathBuf },
+
+    #[error("invalid edit range {range:?} for '{path}' with {source_len} bytes")]
+    InvalidEditRange {
+        path: PathBuf,
+        range: Range<usize>,
+        source_len: usize,
+    },
+
+    #[error("overlapping edits for '{path}' at byte ranges {first:?} and {second:?}")]
+    OverlappingEdits {
+        path: PathBuf,
+        first: Range<usize>,
+        second: Range<usize>,
+    },
+
     #[error("duplicate page ID '{id}' in '{path1}' and '{path2}'")]
     DuplicatePageId {
         id: String,
+        path1: PathBuf,
+        path2: PathBuf,
+    },
+
+    #[error("duplicate page name or alias '{name}' in '{path1}' and '{path2}'")]
+    DuplicatePageName {
+        name: String,
         path1: PathBuf,
         path2: PathBuf,
     },
@@ -104,7 +132,16 @@ pub enum WikiError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FrontmatterError {
-    #[error("YAML parse error near '{context}'")]
+    #[error("no frontmatter")]
+    NoFrontmatter,
+
+    #[error("field '{field}' not found")]
+    MissingField { field: String },
+
+    #[error("frontmatter is not a YAML mapping")]
+    NotMapping,
+
+    #[error("YAML error near '{context}'")]
     Yaml {
         #[source]
         source: Box<serde_yml::Error>,
@@ -122,13 +159,4 @@ pub enum RenameError {
 
     #[error("target page already exists: '{path}'")]
     TargetExists { path: PathBuf },
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum LintError {
-    #[error(transparent)]
-    Wiki(#[from] WikiError),
-
-    #[error("{count} lint error(s) found")]
-    Failed { count: usize },
 }

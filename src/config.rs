@@ -1,9 +1,11 @@
 use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use serde::Deserialize;
 
 use crate::error::ConfigError;
+use crate::page::LinkStyle;
 
 /// Severity level for a check or rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -124,6 +126,10 @@ pub struct LinkingConfig {
     pub exclude: HashSet<String>,
     /// Frontmatter field for per-page auto-link opt-out.
     pub autolink_field: String,
+    /// Style used for generated and explicitly formatted internal links.
+    pub link_style: LinkStyle,
+    /// Per-document target count that selects Reference-style Markdown links.
+    pub reference_style_threshold: Option<NonZeroUsize>,
 }
 
 /// Wiki-wide structural check severities.
@@ -290,6 +296,10 @@ struct RawLinkingConfig {
     exclude: Vec<String>,
     #[serde(default = "default_autolink_field")]
     autolink_field: String,
+    #[serde(default)]
+    link_style: LinkStyle,
+    #[serde(default)]
+    reference_style_threshold: Option<NonZeroUsize>,
 }
 
 fn default_autolink_field() -> String {
@@ -405,6 +415,8 @@ impl WikiConfig {
             linking: LinkingConfig {
                 exclude: HashSet::new(),
                 autolink_field: default_autolink_field(),
+                link_style: LinkStyle::Obsidian,
+                reference_style_threshold: None,
             },
             checks: ChecksConfig {
                 broken_links: Severity::Error,
@@ -452,9 +464,18 @@ impl WikiConfig {
         };
         validate_ignore_patterns(&ignore)?;
 
+        if raw.linking.reference_style_threshold.is_some()
+            && raw.linking.link_style != LinkStyle::Markdown
+        {
+            return Err(ConfigError::Validation(
+                "reference_style_threshold requires markdown link_style".to_owned(),
+            ));
+        }
         let linking = LinkingConfig {
             exclude: raw.linking.exclude.into_iter().collect(),
             autolink_field: raw.linking.autolink_field,
+            link_style: raw.linking.link_style,
+            reference_style_threshold: raw.linking.reference_style_threshold,
         };
 
         let checks = ChecksConfig {
@@ -648,6 +669,36 @@ path = "wiki"
     }
 
     #[test]
+    fn parses_markdown_link_style() {
+        let raw: RawConfig =
+            toml::from_str("[linking]\nlink_style = \"markdown\"\nreference_style_threshold = 2\n")
+                .unwrap();
+        let config = WikiConfig::from_raw(raw).unwrap();
+
+        assert_eq!(config.linking.link_style, LinkStyle::Markdown);
+        assert_eq!(
+            config
+                .linking
+                .reference_style_threshold
+                .map(NonZeroUsize::get),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn rejects_reference_style_for_obsidian_links() {
+        let raw: RawConfig =
+            toml::from_str("[linking]\nlink_style = \"obsidian\"\nreference_style_threshold = 1\n")
+                .unwrap();
+
+        assert!(matches!(
+            WikiConfig::from_raw(raw),
+            Err(ConfigError::Validation(message))
+                if message.contains("reference_style_threshold requires markdown")
+        ));
+    }
+
+    #[test]
     fn parses_full_config() {
         let toml = r#"
 index = "contents.md"
@@ -739,6 +790,8 @@ severity = "warn"
             linking: LinkingConfig {
                 exclude: HashSet::new(),
                 autolink_field: "autolink".to_owned(),
+                link_style: LinkStyle::Obsidian,
+                reference_style_threshold: None,
             },
             checks: ChecksConfig {
                 broken_links: Severity::Error,

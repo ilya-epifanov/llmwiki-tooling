@@ -4,6 +4,7 @@ mod edit_plan;
 mod error;
 mod frontmatter;
 mod inventory;
+mod link_format;
 mod link_index;
 mod markdown_document;
 mod markdown_links;
@@ -138,6 +139,12 @@ enum LinksAction {
         #[arg(long)]
         write: bool,
     },
+    /// Convert internal links to the repository's preferred style
+    Format {
+        /// Apply changes (default: dry-run showing diff)
+        #[arg(long)]
+        write: bool,
+    },
     /// Find wikilinks pointing to non-existent pages/headings/blocks
     Broken,
     /// Find pages with no inbound wikilinks
@@ -239,6 +246,14 @@ fn run_inner() -> Result<ExitCode, anyhow::Error> {
                     eprintln!("{count} bare mention(s) to fix. Use --write to apply.");
                 } else if count == 0 {
                     eprintln!("no bare mentions found");
+                }
+            }
+            LinksAction::Format { write } => {
+                let count = crate::cmd::links::format(&mut wiki, write)?;
+                if count == 0 {
+                    eprintln!("no links to format");
+                } else if !write {
+                    eprintln!("{count} link(s) to format. Use --write to apply.");
                 }
             }
             LinksAction::Broken => {

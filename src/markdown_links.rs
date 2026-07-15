@@ -116,7 +116,7 @@ pub(crate) fn decode_url_path(path: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
-fn relative_path(from_dir: &Path, target: &Path) -> PathBuf {
+pub(crate) fn relative_path(from_dir: &Path, target: &Path) -> PathBuf {
     let from = normalize_path(from_dir.to_path_buf());
     let target = normalize_path(target.to_path_buf());
     let from_components: Vec<_> = from.components().collect();

@@ -2,6 +2,8 @@ use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 
+use serde::Deserialize;
+
 /// Filename stem identifying a wiki page, normalized to lowercase for O(1) lookups.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PageId(String);
@@ -31,7 +33,7 @@ impl From<&str> for PageId {
 }
 
 /// A block identifier without the `^` prefix, e.g. `"method-comparison"`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(String);
 
 impl BlockId {
@@ -47,7 +49,7 @@ impl From<&str> for BlockId {
 }
 
 /// Fragment part of an internal link after `#`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum LinkFragment {
     /// `#heading-text`
     Heading(String),
@@ -58,8 +60,10 @@ pub enum LinkFragment {
 pub use LinkFragment as WikilinkFragment;
 
 /// Source syntax used by an internal link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LinkStyle {
+    #[default]
     Obsidian,
     Markdown,
 }
@@ -98,4 +102,37 @@ pub struct Heading {
     pub level: u8,
     pub text: String,
     pub byte_range: Range<usize>,
+}
+
+pub(crate) fn github_heading_anchors(headings: &[Heading]) -> impl Iterator<Item = String> + '_ {
+    let mut used = std::collections::HashSet::new();
+    headings.iter().map(move |heading| {
+        let base = github_heading_anchor(&heading.text);
+        let mut anchor = base.clone();
+        let mut suffix = 1;
+        while !used.insert(anchor.clone()) {
+            anchor = format!("{base}-{suffix}");
+            suffix += 1;
+        }
+        anchor
+    })
+}
+
+pub(crate) fn github_heading_anchor(heading: &str) -> String {
+    heading
+        .chars()
+        .filter_map(|character| {
+            if character.is_ascii_uppercase() {
+                Some(character.to_ascii_lowercase())
+            } else if character.is_alphanumeric() || matches!(character, '-' | '_') {
+                Some(character)
+            } else if character.is_whitespace() {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned()
 }

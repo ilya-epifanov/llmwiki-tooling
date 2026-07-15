@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::edit_plan::{DryRunOutput, EditPlan, EditPlanMode};
 use crate::error::WikiError;
+use crate::link_format;
 use crate::link_index::LinkIndex;
 use crate::mention::{BareMention, ConceptMatcher};
 use crate::page::PageId;
@@ -54,13 +55,7 @@ pub fn fix(wiki: &mut Wiki, write: bool) -> Result<usize, WikiError> {
     plan.add_scannable_edits(wiki, |file_path, _source| {
         let mentions = bare_mentions_for_file(wiki, &matcher, file_path)?;
         total_fixes += mentions.len();
-        Ok(mentions
-            .iter()
-            .map(|m| {
-                let display = wiki.display_name(&m.concept).unwrap_or(m.concept.as_str());
-                (m.byte_range.clone(), format!("[[{}]]", display))
-            })
-            .collect())
+        link_format::format_mentions(wiki, file_path, &mentions)
     })?;
 
     plan.execute(
@@ -69,6 +64,29 @@ pub fn fix(wiki: &mut Wiki, write: bool) -> Result<usize, WikiError> {
     )?;
 
     Ok(total_fixes)
+}
+
+/// Run `links format`: convert resolvable internal links to the configured style.
+pub fn format(wiki: &mut Wiki, write: bool) -> Result<usize, WikiError> {
+    let mut total_edits = 0;
+    let mut plan = EditPlan::new();
+    plan.add_scannable_edits(wiki, |file_path, _source| {
+        let outcome = link_format::format_document(wiki, file_path)?;
+        if outcome.skipped > 0 {
+            eprintln!(
+                "warn: left {} unresolved link(s) unchanged in {}",
+                outcome.skipped,
+                wiki.rel_path(file_path).display()
+            );
+        }
+        total_edits += outcome.edits.len();
+        Ok(outcome.edits)
+    })?;
+    plan.execute(
+        wiki,
+        EditPlanMode::from_write_flag(write, DryRunOutput::Diff),
+    )?;
+    Ok(total_edits)
 }
 
 /// Run `links broken`: find broken wikilinks.

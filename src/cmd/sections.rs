@@ -1,6 +1,7 @@
 use crate::config::WikiConfig;
 use crate::edit_plan::{DryRunOutput, EditPlan, EditPlanMode};
 use crate::error::WikiError;
+use crate::page::github_heading_anchor;
 use crate::wiki::Wiki;
 
 /// Run `sections rename`: rename a heading across the wiki, including fragment references.
@@ -51,6 +52,30 @@ pub fn rename(
                 if new_wl != wl_src {
                     file_edits.push((wl.byte_range.clone(), new_wl));
                 }
+            }
+        }
+
+        let old_anchor = github_heading_anchor(old_name);
+        let new_anchor = github_heading_anchor(new_name);
+        for link in document.markdown_links() {
+            let Some((_, fragment)) = link.destination.split_once('#') else {
+                continue;
+            };
+            let replacement = if fragment == old_anchor {
+                Some(new_anchor.clone())
+            } else {
+                fragment
+                    .strip_prefix(&old_anchor)
+                    .filter(|suffix| {
+                        suffix.strip_prefix('-').is_some_and(|number| {
+                            number.chars().all(|character| character.is_ascii_digit())
+                        })
+                    })
+                    .map(|suffix| format!("{new_anchor}{suffix}"))
+            };
+            if let Some(replacement) = replacement {
+                let fragment_start = link.byte_range.end - fragment.len();
+                file_edits.push((fragment_start..link.byte_range.end, replacement));
             }
         }
 

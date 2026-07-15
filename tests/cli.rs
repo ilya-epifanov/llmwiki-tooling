@@ -232,6 +232,123 @@ fn markdown_links_are_first_class_graph_edges() {
 }
 
 #[test]
+fn links_format_uses_reference_style_threshold_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[linking]\nlink_style = \"markdown\"\nreference_style_threshold = 2\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("topics/Target Page.md"),
+        "# Target Page\n\n## Key Findings\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [[Target Page]] and [[Target Page#Key Findings|details]].\n",
+    )
+    .unwrap();
+
+    let output = run(dir.path(), &["links", "format", "--write"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
+        "See [Target Page] and [details][Target Page#Key Findings].\n\n[Target Page]: topics/Target%20Page.md\n[Target Page#Key Findings]: topics/Target%20Page.md#key-findings\n"
+    );
+
+    let second = run(dir.path(), &["links", "format", "--write"]);
+    assert!(second.status.success(), "{}", text(&second.stderr));
+    assert!(text(&second.stderr).contains("no links to format"));
+}
+
+#[test]
+fn links_fix_uses_configured_reference_style() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[linking]\nlink_style = \"markdown\"\nreference_style_threshold = 1\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("topics/Target Page.md"), "# Target Page\n").unwrap();
+    std::fs::write(dir.path().join("overview.md"), "Read Target Page.\n").unwrap();
+
+    let output = run(dir.path(), &["links", "fix", "--write"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
+        "Read [Target Page].\n\n[Target Page]: topics/Target%20Page.md\n"
+    );
+}
+
+#[test]
+fn links_format_converts_to_obsidian_without_touching_images() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[linking]\nlink_style = \"obsidian\"\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("topics/Target.md"),
+        "# Target\n\n## Key Findings\n\nDetail ^evidence\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [details][Target#Key Findings] and [evidence](topics/Target.md#^evidence).\n\n![diagram][asset]\n\n[Target#Key Findings]: topics/Target.md#key-findings\n[asset]: diagram.png\n",
+    )
+    .unwrap();
+
+    let output = run(dir.path(), &["links", "format", "--write"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
+        "See [[Target#Key Findings|details]] and [[Target#^evidence|evidence]].\n\n![diagram][asset]\n\n[asset]: diagram.png\n"
+    );
+}
+
+#[test]
+fn sections_rename_updates_markdown_heading_fragments() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("topics/Target.md"),
+        "# Target\n\n## Key Findings\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [inline](topics/Target.md#key-findings) and [reference][Target].\n\n[Target]: topics/Target.md#key-findings\n",
+    )
+    .unwrap();
+
+    let output = run(
+        dir.path(),
+        &[
+            "sections",
+            "rename",
+            "Key Findings",
+            "Main Results",
+            "--write",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
+        "See [inline](topics/Target.md#main-results) and [reference][Target].\n\n[Target]: topics/Target.md#main-results\n"
+    );
+}
+
+#[test]
 fn unmanaged_broken_links_warn_without_failing_lint() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("topics")).unwrap();

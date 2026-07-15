@@ -47,6 +47,14 @@ pub struct MarkdownLinkDestination {
     pub byte_range: Range<usize>,
 }
 
+/// A CommonMark link reference definition and its complete source range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownReferenceDefinition {
+    pub label: String,
+    pub destination: String,
+    pub byte_range: Range<usize>,
+}
+
 /// Markdown source plus cached wiki-relevant parsed structure.
 pub struct MarkdownDocument {
     source: String,
@@ -55,6 +63,7 @@ pub struct MarkdownDocument {
     wikilinks: OnceCell<Vec<WikilinkOccurrence>>,
     internal_links: OnceCell<Vec<InternalLinkOccurrence>>,
     markdown_links: OnceCell<Vec<MarkdownLinkDestination>>,
+    reference_definitions: OnceCell<Vec<MarkdownReferenceDefinition>>,
     classified_ranges: OnceCell<Vec<ClassifiedRange>>,
     block_ids: OnceCell<Vec<BlockId>>,
 }
@@ -68,6 +77,7 @@ impl MarkdownDocument {
             wikilinks: OnceCell::new(),
             internal_links: OnceCell::new(),
             markdown_links: OnceCell::new(),
+            reference_definitions: OnceCell::new(),
             classified_ranges: OnceCell::new(),
             block_ids: OnceCell::new(),
         }
@@ -109,6 +119,11 @@ impl MarkdownDocument {
     pub fn markdown_links(&self) -> &[MarkdownLinkDestination] {
         self.markdown_links
             .get_or_init(|| parse::extract_markdown_links(&self.source))
+    }
+
+    pub fn reference_definitions(&self) -> &[MarkdownReferenceDefinition] {
+        self.reference_definitions
+            .get_or_init(|| parse::extract_reference_definitions(&self.source))
     }
 
     pub fn classified_ranges(&self) -> &[ClassifiedRange] {

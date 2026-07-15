@@ -3,7 +3,7 @@ use std::path::Path;
 
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
-use super::{ClassifiedRange, MarkdownLinkDestination, RangeKind};
+use super::{ClassifiedRange, MarkdownLinkDestination, MarkdownReferenceDefinition, RangeKind};
 use crate::page::{
     BlockId, Heading, InternalLinkOccurrence, InternalLinkTarget, LinkFragment, LinkStyle, PageId,
     WikilinkFragment, WikilinkOccurrence,
@@ -366,6 +366,21 @@ pub(super) fn extract_markdown_links(source: &str) -> Vec<MarkdownLinkDestinatio
 
     links.extend(markdown_reference_definitions(source));
     links
+}
+
+pub(super) fn extract_reference_definitions(source: &str) -> Vec<MarkdownReferenceDefinition> {
+    let parser = Parser::new_ext(source, parser_options());
+    let mut definitions = parser
+        .reference_definitions()
+        .iter()
+        .map(|(label, definition)| MarkdownReferenceDefinition {
+            label: label.to_owned(),
+            destination: definition.dest.to_string(),
+            byte_range: definition.span.clone(),
+        })
+        .collect::<Vec<_>>();
+    definitions.sort_by_key(|definition| definition.byte_range.start);
+    definitions
 }
 
 fn inline_destination_range(markup: &str, dest_url: &str) -> Option<Range<usize>> {

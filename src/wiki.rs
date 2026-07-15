@@ -404,7 +404,7 @@ mod tests {
             .unwrap();
 
         assert!(foo.is_absolute());
-        assert_eq!(wiki.file(&foo).unwrap().source(), "# Foo\n");
+        assert_eq!(wiki.file(foo).unwrap().source(), "# Foo\n");
     }
 
     #[test]

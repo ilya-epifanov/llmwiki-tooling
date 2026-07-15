@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::error::WikiError;
 use crate::page::{
     Heading, InternalLinkOccurrence, LinkFragment, LinkStyle, PageId, WikilinkOccurrence,
+    github_heading_anchors,
 };
 use crate::wiki::Wiki;
 
@@ -182,39 +183,6 @@ fn heading_exists(headings: &[Heading], fragment: &str, style: LinkStyle) -> boo
     }
 
     github_heading_anchors(headings).any(|anchor| anchor == fragment)
-}
-
-fn github_heading_anchors(headings: &[Heading]) -> impl Iterator<Item = String> + '_ {
-    let mut used = std::collections::HashSet::new();
-    headings.iter().map(move |heading| {
-        let base = github_heading_anchor(&heading.text);
-        let mut anchor = base.clone();
-        let mut suffix = 1;
-        while !used.insert(anchor.clone()) {
-            anchor = format!("{base}-{suffix}");
-            suffix += 1;
-        }
-        anchor
-    })
-}
-
-fn github_heading_anchor(heading: &str) -> String {
-    heading
-        .chars()
-        .filter_map(|character| {
-            if character.is_ascii_uppercase() {
-                Some(character.to_ascii_lowercase())
-            } else if character.is_alphanumeric() || matches!(character, '-' | '_') {
-                Some(character)
-            } else if character.is_whitespace() {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_owned()
 }
 
 #[cfg(test)]

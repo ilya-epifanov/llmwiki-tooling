@@ -16,7 +16,8 @@ verbatim = ["raw-inputs/", "scraped/"]
 # Declare managed wiki page directories. Each entry is recursive
 # (includes all subdirectories). Managed pages get rules, orphans, index coverage,
 # and auto-link candidate governance. Non-verbatim Markdown outside these directories
-# is unmanaged: link-aware, but not governed. Verbatim Markdown is skipped entirely.
+# is unmanaged: Markdown-path-addressable and scanned, but not an Obsidian
+# name/alias target or governed page. Verbatim Markdown is skipped entirely.
 #
 # When multiple entries overlap (parent + child), the most-specific path wins
 # for per-page settings. This is the intended override mechanism:

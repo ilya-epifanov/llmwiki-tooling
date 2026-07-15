@@ -15,7 +15,7 @@ Implemented and verified equal parsing, resolution, linting, graphing, rename, a
 - Consult `wayfinder`, `domain-modeling`, `analysis-design-guidelines`, `rust-code-guidelines`, and `ponytail` while resolving tickets. Consult `prompt-writing-guidelines` for agent/setup guidance.
 - The local-Markdown tracker uses issue frontmatter for status, assignee, parent, labels, and fallback `blocked_by` relationships. An open issue with no blockers and no assignee is on the frontier.
 - Both link styles are always accepted in the same repository. The configured style controls generation and explicit `links format`, not parsing.
-- Markdown internal links are path-addressed; Obsidian internal links are page-name/alias-addressed. Page-name and alias uniqueness remains repository-wide and case-insensitive.
+- Markdown internal links are path-addressed across all scanned files; Obsidian internal links are page-name/alias-addressed among configured pages. Configured page-name and alias uniqueness remains repository-wide and case-insensitive, while unmanaged files may share stems.
 - Existing block links remain supported in both styles, but generated agent guidance prefers heading links. Embeds are parsed but never style-converted.
 - Unconfigured repositories continue generating Obsidian links for backward compatibility.
 

@@ -155,7 +155,7 @@ path = "topics"
 }
 
 #[test]
-fn loose_pages_and_obsidian_aliases_are_link_targets() {
+fn managed_obsidian_aliases_and_unmanaged_markdown_paths_are_link_targets() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("topics")).unwrap();
     std::fs::write(
@@ -176,7 +176,7 @@ path = "topics"
     std::fs::write(dir.path().join("loose-note.md"), "# Loose\n").unwrap();
     std::fs::write(
         dir.path().join("overview.md"),
-        "See [[Short Name]] and [[loose-note]].\n",
+        "See [[Short Name]] and [loose note](loose-note.md).\n",
     )
     .unwrap();
 
@@ -229,6 +229,44 @@ fn markdown_links_are_first_class_graph_edges() {
     let check = run(dir.path(), &["links", "check"]);
     assert!(check.status.success(), "{}", text(&check.stderr));
     assert!(text(&check.stdout).is_empty(), "{}", text(&check.stdout));
+}
+
+#[test]
+fn lint_allows_unmanaged_path_to_share_a_managed_page_name() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("wiki/papers")).unwrap();
+    std::fs::create_dir_all(dir.path().join("raw/papers")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        r#"index = ""
+
+[checks]
+orphan_pages = "off"
+index_coverage = "off"
+
+[[directories]]
+path = "wiki/papers"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("wiki/papers/Target.md"),
+        "# Target\n\n## Managed details\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("raw/papers/Target.md"),
+        "# Raw target\n\n## Raw details\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [[Target#Managed details]] and [raw](raw/papers/Target.md#raw-details).\n",
+    )
+    .unwrap();
+
+    let lint = run(dir.path(), &["lint"]);
+    assert!(lint.status.success(), "{}", text(&lint.stderr));
 }
 
 #[test]
@@ -343,6 +381,27 @@ fn links_format_converts_to_obsidian_without_touching_images() {
     assert_eq!(
         std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
         "See [[Target#Key Findings|details]] and [[Target#^evidence|evidence]].\n\n![diagram][asset]\n\n[asset]: diagram.png\n"
+    );
+}
+
+#[test]
+fn links_format_preserves_path_only_unmanaged_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("raw/papers")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[linking]\nlink_style = \"obsidian\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("raw/papers/Source.md"), "# Source\n").unwrap();
+    let original = "See [raw](raw/papers/Source.md).\n";
+    std::fs::write(dir.path().join("overview.md"), original).unwrap();
+
+    let output = run(dir.path(), &["links", "format", "--write"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
+        original
     );
 }
 

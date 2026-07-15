@@ -111,6 +111,7 @@ impl Wiki {
         let content = FrozenMap::new();
         let mut pages: HashMap<PageId, PathBuf> = HashMap::new();
         let mut targets: TargetMap = HashMap::new();
+        let mut path_ids = HashMap::new();
         let mut aliases_to_index = Vec::new();
         let mut autolink_candidates = HashSet::new();
 
@@ -124,10 +125,16 @@ impl Wiki {
                 content.insert(path, Box::new(document));
                 continue;
             };
+            path_ids.insert(
+                markdown_links::normalize_path(rel_path.clone()),
+                page_id.clone(),
+            );
 
-            if config.index.as_deref() != rel_path.to_str()
-                && let Some(dir_config) = config.directory_for(&rel_path)
-            {
+            let is_index = config.index.as_deref() == rel_path.to_str();
+            let dir_config = (!is_index)
+                .then(|| config.directory_for(&rel_path))
+                .flatten();
+            if let Some(dir_config) = dir_config {
                 if let Some(existing) = pages.get(&page_id) {
                     return Err(WikiError::DuplicatePageId {
                         id: page_id.to_string(),
@@ -141,17 +148,19 @@ impl Wiki {
                 pages.insert(page_id.clone(), rel_path.clone());
             }
 
-            if let Some(existing) = targets.insert(page_id.clone(), rel_path.clone()) {
-                return Err(WikiError::DuplicatePageName {
-                    name: page_id.to_string(),
-                    path1: existing,
-                    path2: rel_path,
-                });
-            }
+            if is_index || dir_config.is_some() {
+                if let Some(existing) = targets.insert(page_id.clone(), rel_path.clone()) {
+                    return Err(WikiError::DuplicatePageName {
+                        name: page_id.to_string(),
+                        path1: existing,
+                        path2: rel_path,
+                    });
+                }
 
-            let aliases = frontmatter_aliases(&path, &document)?;
-            if !aliases.is_empty() {
-                aliases_to_index.push((page_id, rel_path, aliases));
+                let aliases = frontmatter_aliases(&path, &document)?;
+                if !aliases.is_empty() {
+                    aliases_to_index.push((page_id, rel_path, aliases));
+                }
             }
             content.insert(path, Box::new(document));
         }
@@ -182,16 +191,6 @@ impl Wiki {
                 }
             }
         }
-
-        let path_ids = targets
-            .iter()
-            .map(|(page_id, path)| {
-                (
-                    markdown_links::normalize_path(path.clone()),
-                    page_id.clone(),
-                )
-            })
-            .collect();
 
         Ok(Self {
             root,
@@ -246,8 +245,8 @@ impl Wiki {
             InternalLinkTarget::PageName(page) => {
                 if page.as_str().is_empty() {
                     let source = self.rel_path(source_path);
-                    let page = self.path_ids.get(source)?;
-                    return Some((page, self.targets.get(page)?));
+                    let (path, page) = self.path_ids.get_key_value(source)?;
+                    return Some((page, path));
                 }
                 let canonical = self.canonical_id(page)?;
                 Some((canonical, self.targets.get(canonical)?))
@@ -268,8 +267,8 @@ impl Wiki {
                             .join(decoded),
                     )
                 };
-                let page = self.path_ids.get(&target)?;
-                Some((page, self.targets.get(page)?))
+                let (path, page) = self.path_ids.get_key_value(&target)?;
+                Some((page, path))
             }
         }
     }

@@ -64,6 +64,8 @@ This generates a starting-point wiki.toml. Edit it to customize:
 - Set `[linking].link_style` to `obsidian` or `markdown`
 - For Markdown links, set `reference_style_threshold` only when repeated targets
   should use Reference-style links
+- Link unmanaged Markdown by relative path; use Obsidian names and aliases only
+  for configured pages
 - Add `[[rules]]` for required sections, required frontmatter, mirror parity
 - Add citation patterns if the wiki tracks references to external sources
 - Adjust `[checks]` severities if needed

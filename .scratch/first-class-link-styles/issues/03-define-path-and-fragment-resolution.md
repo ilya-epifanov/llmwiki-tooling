@@ -15,4 +15,4 @@ How should Markdown paths, Obsidian page names and aliases, heading fragments, b
 
 ## Resolution comment
 
-Obsidian targets retain case-insensitive page-name/alias resolution. Markdown targets decode percent escapes and resolve relative to the source document's actual `.md` path. Heading fragments use the fixture-backed GitHub-compatible profile; `#^block-id` remains supported in either syntax. Missing or ambiguous targets stay unresolved and preserve repository-wide page-name/alias uniqueness.
+Obsidian targets retain case-insensitive page-name/alias resolution among configured pages. Markdown targets decode percent escapes and resolve any scanned file relative to the source document's actual `.md` path. Heading fragments use the fixture-backed GitHub-compatible profile; `#^block-id` remains supported in either syntax. Configured page names and aliases stay repository-wide and case-insensitively unique; unmanaged files may share stems because they are path-addressed only.

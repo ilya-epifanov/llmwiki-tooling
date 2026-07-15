@@ -56,14 +56,14 @@ llmwiki-tool setup init              # Generate wiki.toml from detected structur
 llmwiki-tool setup example-config    # Output annotated wiki.toml with all options
 ```
 
-Internal links are scanned repo-wide across non-verbatim Markdown. Obsidian links resolve by filename stem or `aliases:` frontmatter; regular Markdown links resolve by their relative `.md` path. Page names and aliases remain repository-wide and case-insensitively unique for stable conversion between styles.
+Internal links are scanned repo-wide across non-verbatim Markdown. Obsidian links resolve configured pages by filename stem or `aliases:` frontmatter; regular Markdown links resolve any scanned file by its relative `.md` path. Configured page names and aliases remain repository-wide and case-insensitively unique. Unmanaged files may share those stems because they are path-addressed only.
 
 Both styles are always accepted, including mixed documents. `[linking].link_style` controls newly generated links and the explicit `links format` command; unrelated commands preserve existing syntax. Markdown repositories may set `reference_style_threshold` to use Reference-style links when one document links to the same target page repeatedly.
 
 Page categories:
 
 - **Managed pages** are `.md` files under declared `[[directories]]`. They are governed wiki entries: rules, orphans, index coverage, and auto-link candidate generation apply.
-- **Unmanaged pages** are non-verbatim `.md` files outside declared `[[directories]]`. They are link-aware but not governed: they can link to and be linked from managed pages, and repo-wide commands may check/rewrite their links, but they do not have required orphan/index/rule coverage.
+- **Unmanaged pages** are non-verbatim `.md` files outside declared `[[directories]]`. They are path-addressable with Markdown links and can link to managed pages, but they are not Obsidian name/alias targets and do not have required orphan/index/rule coverage.
 - **Verbatim pages** match `verbatim = ["drafts/", "exports/"]` or ignore patterns. They are skipped entirely by link scans, rewrites, and lint checks.
 
 Broken-link lint uses `[checks].broken_links` for managed pages (default: `error`) and `[checks].unmanaged_broken_links` for unmanaged pages (default: `warn`). Verbatim pages emit no link warnings or errors.

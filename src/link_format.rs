@@ -43,6 +43,14 @@ pub(crate) fn format_document(wiki: &Wiki, file_path: &Path) -> Result<FormatOut
             skipped += 1;
             continue;
         };
+        if wiki.config().linking.link_style == LinkStyle::Obsidian
+            && !wiki
+                .find(page.as_str())
+                .is_some_and(|(_, name_target)| name_target == target_path)
+        {
+            skipped += 1;
+            continue;
+        }
         let Some(fragment) = canonical_fragment(wiki, target_path, link)? else {
             skipped += 1;
             continue;

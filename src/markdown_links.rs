@@ -95,6 +95,27 @@ pub(crate) fn normalize_path(path: PathBuf) -> PathBuf {
     out
 }
 
+pub(crate) fn decode_url_path(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let value = u8::from_str_radix(
+                std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?,
+                16,
+            )
+            .ok()?;
+            decoded.push(value);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
 fn relative_path(from_dir: &Path, target: &Path) -> PathBuf {
     let from = normalize_path(from_dir.to_path_buf());
     let target = normalize_path(target.to_path_buf());

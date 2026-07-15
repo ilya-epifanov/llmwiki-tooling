@@ -1,9 +1,13 @@
 use std::ops::Range;
+use std::path::Path;
 
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 use super::{ClassifiedRange, MarkdownLinkDestination, RangeKind};
-use crate::page::{BlockId, Heading, PageId, WikilinkFragment, WikilinkOccurrence};
+use crate::page::{
+    BlockId, Heading, InternalLinkOccurrence, InternalLinkTarget, LinkFragment, LinkStyle, PageId,
+    WikilinkFragment, WikilinkOccurrence,
+};
 
 fn parser_options() -> Options {
     Options::ENABLE_WIKILINKS
@@ -101,7 +105,17 @@ pub(super) fn classify_ranges(source: &str) -> Vec<ClassifiedRange> {
                 });
                 context_stack.push(RangeKind::Url);
             }
+            Event::Start(Tag::Link { .. }) | Event::Start(Tag::Image { .. }) => {
+                ranges.push(ClassifiedRange {
+                    kind: RangeKind::Url,
+                    byte_range: range,
+                });
+                context_stack.push(RangeKind::Url);
+            }
             Event::End(TagEnd::Link) if context_stack.last() == Some(&RangeKind::Url) => {
+                context_stack.pop();
+            }
+            Event::End(TagEnd::Image) if context_stack.last() == Some(&RangeKind::Url) => {
                 context_stack.pop();
             }
 
@@ -188,6 +202,140 @@ pub(super) fn extract_wikilinks(source: &str) -> Vec<WikilinkOccurrence> {
     }
 
     wikilinks
+}
+
+/// Extract Obsidian and Markdown internal links into one syntax-neutral view.
+pub(super) fn extract_internal_links(source: &str) -> Vec<InternalLinkOccurrence> {
+    Parser::new_ext(source, parser_options())
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                id,
+                ..
+            }) => internal_link(source, range, link_type, &dest_url, &id, false),
+            Event::Start(Tag::Image {
+                link_type: LinkType::WikiLink { .. },
+                dest_url,
+                id,
+                ..
+            }) => internal_link(
+                source,
+                range,
+                LinkType::WikiLink {
+                    has_pothole: !id.is_empty(),
+                },
+                &dest_url,
+                &id,
+                true,
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+fn internal_link(
+    source: &str,
+    range: Range<usize>,
+    link_type: LinkType,
+    destination: &str,
+    reference_id: &str,
+    embed: bool,
+) -> Option<InternalLinkOccurrence> {
+    let markup = &source[range.clone()];
+    let (style, target, fragment) = match link_type {
+        LinkType::WikiLink { .. } => {
+            let (page, fragment) = split_fragment(destination);
+            (
+                LinkStyle::Obsidian,
+                InternalLinkTarget::PageName(PageId::from(page)),
+                fragment,
+            )
+        }
+        LinkType::Inline | LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => {
+            let (path, fragment) = split_fragment(destination);
+            if !path.is_empty() && Path::new(path).extension().is_none_or(|ext| ext != "md") {
+                return None;
+            }
+            (
+                LinkStyle::Markdown,
+                InternalLinkTarget::Path(path.to_owned()),
+                fragment,
+            )
+        }
+        _ => return None,
+    };
+
+    let destination_range = (style == LinkStyle::Markdown && link_type == LinkType::Inline)
+        .then(|| inline_destination_range(markup, destination))
+        .flatten()
+        .map(|dest| range.start + dest.start..range.start + dest.end);
+    Some(InternalLinkOccurrence {
+        style,
+        target,
+        fragment,
+        display_text: link_text(markup, style),
+        byte_range: range,
+        destination_range,
+        reference_label: matches!(
+            link_type,
+            LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut
+        )
+        .then(|| reference_id.to_owned()),
+        embed,
+    })
+}
+
+fn split_fragment(destination: &str) -> (&str, Option<LinkFragment>) {
+    let (page, fragment) =
+        destination
+            .split_once('#')
+            .map_or((destination, None), |(page, fragment)| {
+                let fragment = fragment
+                    .strip_prefix('^')
+                    .map(|block| LinkFragment::Block(BlockId::from(block)))
+                    .unwrap_or_else(|| LinkFragment::Heading(fragment.to_owned()));
+                (page, Some(fragment))
+            });
+    (page, fragment)
+}
+
+fn link_text(markup: &str, style: LinkStyle) -> String {
+    if style == LinkStyle::Obsidian {
+        let inner = markup
+            .trim_start_matches('!')
+            .strip_prefix("[[")
+            .and_then(|text| text.strip_suffix("]]"))
+            .unwrap_or(markup);
+        return inner
+            .split_once('|')
+            .map_or_else(
+                || inner.split('#').next().unwrap_or(inner),
+                |(_, alias)| alias,
+            )
+            .to_owned();
+    }
+
+    let Some(start) = markup.find('[') else {
+        return markup.to_owned();
+    };
+    let mut escaped = false;
+    let mut depth = 0;
+    for (offset, ch) in markup[start + 1..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' => depth += 1,
+            ']' if depth == 0 => return markup[start + 1..start + 1 + offset].to_owned(),
+            ']' => depth -= 1,
+            _ => {}
+        }
+    }
+    markup.to_owned()
 }
 
 /// Extract standard Markdown link destinations from the source.
@@ -459,6 +607,36 @@ mod tests {
             wikilinks[0].fragment,
             Some(WikilinkFragment::Heading("Some Heading".to_owned()))
         );
+    }
+
+    #[test]
+    fn extracts_both_internal_link_styles() {
+        let source = "See [[Page#Heading|wiki]], [inline](topics/Page.md#heading), [full][Page#Heading], and [Page].\n\n[Page#Heading]: topics/Page.md#heading\n[Page]: topics/Page.md\n";
+        let links = extract_internal_links(source);
+
+        assert_eq!(links.len(), 4);
+        assert_eq!(links[0].style, LinkStyle::Obsidian);
+        assert_eq!(
+            links[0].target,
+            InternalLinkTarget::PageName(PageId::from("Page"))
+        );
+        assert_eq!(
+            links[0].fragment,
+            Some(LinkFragment::Heading("Heading".to_owned()))
+        );
+        assert_eq!(links[0].display_text, "wiki");
+        assert_eq!(links[1].style, LinkStyle::Markdown);
+        assert_eq!(
+            links[1].target,
+            InternalLinkTarget::Path("topics/Page.md".to_owned())
+        );
+        assert_eq!(
+            links[1].fragment,
+            Some(LinkFragment::Heading("heading".to_owned()))
+        );
+        assert_eq!(links[1].display_text, "inline");
+        assert_eq!(links[2].reference_label.as_deref(), Some("Page#Heading"));
+        assert_eq!(links[3].reference_label.as_deref(), Some("Page"));
     }
 
     #[test]

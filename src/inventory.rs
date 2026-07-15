@@ -169,11 +169,11 @@ impl WikiInventory {
             let rel_path_str = file.rel_path.to_string_lossy().replace('\\', "/");
 
             if INDEX_CANDIDATES.contains(&rel_path_str.as_str()) {
-                let unique_refs: BTreeSet<&str> = file
+                let unique_refs: BTreeSet<_> = file
                     .document
-                    .wikilinks()
+                    .internal_links()
                     .iter()
-                    .map(|wl| wl.page.as_str())
+                    .map(|link| &link.target)
                     .collect();
                 index_counts.insert(rel_path_str.clone(), unique_refs.len());
             }

@@ -46,20 +46,49 @@ impl From<&str> for BlockId {
     }
 }
 
-/// Fragment part of a wikilink after `#`.
+/// Fragment part of an internal link after `#`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WikilinkFragment {
+pub enum LinkFragment {
     /// `#heading-text`
     Heading(String),
     /// `#^block-id`
     Block(BlockId),
 }
 
+pub use LinkFragment as WikilinkFragment;
+
+/// Source syntax used by an internal link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkStyle {
+    Obsidian,
+    Markdown,
+}
+
+/// Unresolved page part of an internal link target.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InternalLinkTarget {
+    PageName(PageId),
+    Path(String),
+}
+
+/// A parsed navigational link or Obsidian embed with its source location.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InternalLinkOccurrence {
+    pub style: LinkStyle,
+    pub target: InternalLinkTarget,
+    pub fragment: Option<LinkFragment>,
+    pub display_text: String,
+    pub byte_range: Range<usize>,
+    pub destination_range: Option<Range<usize>>,
+    pub reference_label: Option<String>,
+    pub embed: bool,
+}
+
 /// A parsed wikilink occurrence with its source location.
 #[derive(Debug, Clone)]
 pub struct WikilinkOccurrence {
     pub page: PageId,
-    pub fragment: Option<WikilinkFragment>,
+    pub fragment: Option<LinkFragment>,
     pub byte_range: Range<usize>,
 }
 

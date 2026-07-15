@@ -4,7 +4,7 @@ use once_cell::unsync::OnceCell;
 
 use crate::error::FrontmatterError;
 use crate::frontmatter::{self, Frontmatter};
-use crate::page::{BlockId, Heading, WikilinkOccurrence};
+use crate::page::{BlockId, Heading, InternalLinkOccurrence, WikilinkOccurrence};
 
 mod parse;
 
@@ -53,6 +53,7 @@ pub struct MarkdownDocument {
     frontmatter: OnceCell<Option<Frontmatter>>,
     headings: OnceCell<Vec<Heading>>,
     wikilinks: OnceCell<Vec<WikilinkOccurrence>>,
+    internal_links: OnceCell<Vec<InternalLinkOccurrence>>,
     markdown_links: OnceCell<Vec<MarkdownLinkDestination>>,
     classified_ranges: OnceCell<Vec<ClassifiedRange>>,
     block_ids: OnceCell<Vec<BlockId>>,
@@ -65,6 +66,7 @@ impl MarkdownDocument {
             frontmatter: OnceCell::new(),
             headings: OnceCell::new(),
             wikilinks: OnceCell::new(),
+            internal_links: OnceCell::new(),
             markdown_links: OnceCell::new(),
             classified_ranges: OnceCell::new(),
             block_ids: OnceCell::new(),
@@ -97,6 +99,11 @@ impl MarkdownDocument {
     pub fn wikilinks(&self) -> &[WikilinkOccurrence] {
         self.wikilinks
             .get_or_init(|| parse::extract_wikilinks(&self.source))
+    }
+
+    pub fn internal_links(&self) -> &[InternalLinkOccurrence] {
+        self.internal_links
+            .get_or_init(|| parse::extract_internal_links(&self.source))
     }
 
     pub fn markdown_links(&self) -> &[MarkdownLinkDestination] {

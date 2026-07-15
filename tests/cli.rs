@@ -197,6 +197,41 @@ path = "topics"
 }
 
 #[test]
+fn markdown_links_are_first_class_graph_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("topics/Target Page.md"),
+        "# Target Page\n\n## Key Findings\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [Target Page](topics/Target%20Page.md#key-findings) and [reference][Target Page].\n\n[Target Page]: topics/Target%20Page.md\n",
+    )
+    .unwrap();
+
+    let broken = run(dir.path(), &["links", "broken"]);
+    assert!(broken.status.success(), "{}", text(&broken.stdout));
+
+    let refs = run(dir.path(), &["refs", "to", "Target Page"]);
+    assert!(refs.status.success(), "{}", text(&refs.stderr));
+    assert!(text(&refs.stdout).contains("overview.md -> Target Page"));
+
+    let orphans = run(dir.path(), &["links", "orphans"]);
+    assert!(!text(&orphans.stdout).contains("Target Page.md"));
+
+    let check = run(dir.path(), &["links", "check"]);
+    assert!(check.status.success(), "{}", text(&check.stderr));
+    assert!(text(&check.stdout).is_empty(), "{}", text(&check.stdout));
+}
+
+#[test]
 fn unmanaged_broken_links_warn_without_failing_lint() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("topics")).unwrap();

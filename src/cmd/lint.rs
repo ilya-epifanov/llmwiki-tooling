@@ -4,6 +4,7 @@ use crate::config::{MatchMode, RuleConfig, RulePredicate, Severity, WikiConfig};
 use crate::error::WikiError;
 use crate::frontmatter::Frontmatter;
 use crate::link_index::LinkIndex;
+use crate::page::PageId;
 use crate::wiki::Wiki;
 
 /// Severity filter for lint output.
@@ -177,7 +178,7 @@ fn run_broken_links(
 
         let source = wiki.file(&broken.source_path)?.source();
         let rel_path = wiki.rel_path(&broken.source_path);
-        let ref_text = &source[broken.wikilink.byte_range.clone()];
+        let ref_text = &source[broken.link.byte_range.clone()];
         eprintln!(
             "{severity}[broken-link]: {} in {}",
             ref_text.trim(),
@@ -203,15 +204,17 @@ fn run_orphan_pages(wiki: &Wiki, link_index: &LinkIndex) -> usize {
 }
 
 fn run_index_coverage(wiki: &Wiki, index_path: &std::path::Path) -> Result<usize, WikiError> {
-    let index_wikilinks = wiki.file(index_path)?.wikilinks();
-    let referenced: std::collections::HashSet<&str> = index_wikilinks
+    let referenced: std::collections::HashSet<PageId> = wiki
+        .file(index_path)?
+        .internal_links()
         .iter()
-        .map(|wl| wiki.canonical_id(&wl.page).unwrap_or(&wl.page).as_str())
+        .filter_map(|link| wiki.resolve_internal_link(index_path, link))
+        .map(|(page, _)| page.clone())
         .collect();
 
     let mut count = 0;
     for (page_id, rel_path) in wiki.pages() {
-        if !referenced.contains(page_id.as_str()) {
+        if !referenced.contains(page_id) {
             eprintln!(
                 "error[not-in-index]: {} is not listed in index",
                 rel_path.display(),

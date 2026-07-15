@@ -2,7 +2,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::error::WikiError;
-use crate::page::{PageId, WikilinkFragment, WikilinkOccurrence};
+use crate::page::{
+    Heading, InternalLinkOccurrence, LinkFragment, LinkStyle, PageId, WikilinkOccurrence,
+};
 use crate::wiki::Wiki;
 
 /// Why a wikilink could not be resolved.
@@ -27,7 +29,7 @@ impl std::fmt::Display for BrokenReason {
 #[derive(Debug, Clone)]
 pub struct BrokenLink {
     pub source_path: PathBuf,
-    pub wikilink: WikilinkOccurrence,
+    pub link: InternalLinkOccurrence,
     pub reason: BrokenReason,
 }
 
@@ -58,23 +60,31 @@ impl LinkIndex {
             let outbound_links = outbound.entry(source_id).or_default();
             let document = wiki.file(file_path)?;
 
-            for wl in document.wikilinks() {
-                let target = wiki
-                    .canonical_id(&wl.page)
-                    .cloned()
-                    .unwrap_or_else(|| wl.page.clone());
+            for link in document.internal_links() {
+                let Some((target, target_path)) = wiki.resolve_internal_link(file_path, link)
+                else {
+                    broken_links.push(BrokenLink {
+                        source_path: file_path.clone(),
+                        link: link.clone(),
+                        reason: BrokenReason::Page,
+                    });
+                    continue;
+                };
+                let target = target.clone();
                 inbound_paths
                     .entry(target.clone())
                     .or_default()
                     .insert(source_path.clone());
-                let mut canonical = wl.clone();
-                canonical.page = target;
-                outbound_links.push(canonical);
+                outbound_links.push(WikilinkOccurrence {
+                    page: target,
+                    fragment: link.fragment.clone(),
+                    byte_range: link.byte_range.clone(),
+                });
 
-                if let Some(reason) = broken_reason(wiki, wl)? {
+                if let Some(reason) = broken_reason(wiki, target_path, link)? {
                     broken_links.push(BrokenLink {
                         source_path: file_path.clone(),
-                        wikilink: wl.clone(),
+                        link: link.clone(),
                         reason,
                     });
                 }
@@ -136,31 +146,24 @@ impl LinkIndex {
 
 fn broken_reason(
     wiki: &Wiki,
-    wikilink: &WikilinkOccurrence,
+    target_path: &Path,
+    link: &InternalLinkOccurrence,
 ) -> Result<Option<BrokenReason>, WikiError> {
-    if wikilink.page.as_str().is_empty() {
-        return Ok(None);
-    }
-
-    let Some((_, target_rel_path)) = wiki.find(wikilink.page.as_str()) else {
-        return Ok(Some(BrokenReason::Page));
-    };
-
-    let Some(fragment) = &wikilink.fragment else {
+    let Some(fragment) = &link.fragment else {
         return Ok(None);
     };
-    let target_path = wiki.abs_path(target_rel_path);
+    let target_path = wiki.abs_path(target_path);
 
     match fragment {
-        WikilinkFragment::Heading(heading) => Ok((!wiki
-            .file(&target_path)?
-            .headings()
-            .iter()
-            .any(|h| h.text.eq_ignore_ascii_case(heading)))
+        LinkFragment::Heading(heading) => Ok((!heading_exists(
+            wiki.file(&target_path)?.headings(),
+            heading,
+            link.style,
+        ))
         .then(|| BrokenReason::Heading {
             heading: heading.clone(),
         })),
-        WikilinkFragment::Block(block_id) => Ok((!wiki
+        LinkFragment::Block(block_id) => Ok((!wiki
             .file(&target_path)?
             .block_ids()
             .iter()
@@ -169,6 +172,49 @@ fn broken_reason(
             block_id: block_id.as_str().to_owned(),
         })),
     }
+}
+
+fn heading_exists(headings: &[Heading], fragment: &str, style: LinkStyle) -> bool {
+    if style == LinkStyle::Obsidian {
+        return headings
+            .iter()
+            .any(|heading| heading.text.eq_ignore_ascii_case(fragment));
+    }
+
+    github_heading_anchors(headings).any(|anchor| anchor == fragment)
+}
+
+fn github_heading_anchors(headings: &[Heading]) -> impl Iterator<Item = String> + '_ {
+    let mut used = std::collections::HashSet::new();
+    headings.iter().map(move |heading| {
+        let base = github_heading_anchor(&heading.text);
+        let mut anchor = base.clone();
+        let mut suffix = 1;
+        while !used.insert(anchor.clone()) {
+            anchor = format!("{base}-{suffix}");
+            suffix += 1;
+        }
+        anchor
+    })
+}
+
+fn github_heading_anchor(heading: &str) -> String {
+    heading
+        .chars()
+        .filter_map(|character| {
+            if character.is_ascii_uppercase() {
+                Some(character.to_ascii_lowercase())
+            } else if character.is_alphanumeric() || matches!(character, '-' | '_') {
+                Some(character)
+            } else if character.is_whitespace() {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned()
 }
 
 #[cfg(test)]
@@ -199,6 +245,35 @@ mod tests {
             BrokenReason::Heading {
                 heading: "Missing".to_owned()
             }
+        );
+    }
+
+    #[test]
+    fn github_compatible_anchors_preserve_unicode_and_disambiguate_duplicates() {
+        let headings = [
+            "This'll be a Helpful Section About the Greek Letter Θ!",
+            "Repeated",
+            "Repeated",
+            "Repeated-1",
+            "Repeated",
+        ]
+        .into_iter()
+        .map(|text| Heading {
+            level: 2,
+            text: text.to_owned(),
+            byte_range: 0..0,
+        })
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            github_heading_anchors(&headings).collect::<Vec<_>>(),
+            [
+                "thisll-be-a-helpful-section-about-the-greek-letter-Θ",
+                "repeated",
+                "repeated-1",
+                "repeated-1-1",
+                "repeated-2",
+            ]
         );
     }
 }

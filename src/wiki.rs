@@ -9,7 +9,8 @@ use crate::config::WikiConfig;
 use crate::error::WikiError;
 use crate::inventory::{MarkdownFile, MarkdownFileSet};
 use crate::markdown_document::MarkdownDocument;
-use crate::page::PageId;
+use crate::markdown_links;
+use crate::page::{InternalLinkOccurrence, InternalLinkTarget, PageId};
 
 /// Validated wiki root directory.
 #[derive(Debug, Clone)]
@@ -90,6 +91,7 @@ pub struct Wiki {
     config: WikiConfig,
     pages: HashMap<PageId, PathBuf>,
     targets: TargetMap,
+    path_ids: HashMap<PathBuf, PageId>,
     aliases: AliasMap,
     scannable_files: Vec<PathBuf>,
     autolink_candidates: HashSet<PageId>,
@@ -181,11 +183,22 @@ impl Wiki {
             }
         }
 
+        let path_ids = targets
+            .iter()
+            .map(|(page_id, path)| {
+                (
+                    markdown_links::normalize_path(path.clone()),
+                    page_id.clone(),
+                )
+            })
+            .collect();
+
         Ok(Self {
             root,
             config,
             pages,
             targets,
+            path_ids,
             aliases,
             scannable_files,
             autolink_candidates,
@@ -222,6 +235,38 @@ impl Wiki {
         let id = PageId::from(name);
         let canonical = self.canonical_id(&id)?;
         Some((canonical, self.targets.get(canonical)?))
+    }
+
+    pub fn resolve_internal_link(
+        &self,
+        source_path: &Path,
+        link: &InternalLinkOccurrence,
+    ) -> Option<(&PageId, &PathBuf)> {
+        match &link.target {
+            InternalLinkTarget::PageName(page) => {
+                let canonical = self.canonical_id(page)?;
+                Some((canonical, self.targets.get(canonical)?))
+            }
+            InternalLinkTarget::Path(path) => {
+                let source = self.rel_path(source_path);
+                let target = if path.is_empty() {
+                    source.to_path_buf()
+                } else {
+                    let decoded = markdown_links::decode_url_path(path)?;
+                    if Path::new(&decoded).is_absolute() {
+                        return None;
+                    }
+                    markdown_links::normalize_path(
+                        source
+                            .parent()
+                            .unwrap_or_else(|| Path::new(""))
+                            .join(decoded),
+                    )
+                };
+                let page = self.path_ids.get(&target)?;
+                Some((page, self.targets.get(page)?))
+            }
+        }
     }
 
     /// Get the display name for a page target (original filename case from rel_path).

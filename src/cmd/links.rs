@@ -78,8 +78,8 @@ pub fn broken(wiki: &Wiki) -> Result<usize, WikiError> {
     for broken in index.broken_links() {
         let source = wiki.file(&broken.source_path)?.source();
         let rel_path = wiki.rel_path(&broken.source_path);
-        let (line, col) = splice::offset_to_line_col(source, broken.wikilink.byte_range.start);
-        let ref_text = &source[broken.wikilink.byte_range.clone()];
+        let (line, col) = splice::offset_to_line_col(source, broken.link.byte_range.start);
+        let ref_text = &source[broken.link.byte_range.clone()];
         println!(
             "{}:{}:{}: broken link {}: {}",
             rel_path.display(),

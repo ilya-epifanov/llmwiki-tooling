@@ -1,7 +1,7 @@
 ---
 title: Define integration across link-aware commands
 labels: ["wayfinder:grilling"]
-status: open
+status: closed
 assignee: null
 parent: ../map.md
 blocked_by:
@@ -12,3 +12,7 @@ blocked_by:
 ## Question
 
 How should the unified internal-link model replace wikilink-only behavior in broken-link checks, orphan and index coverage, reference queries and graphs, page and heading rename, page move, bare-mention detection, and generated link edits while preserving each existing command's scope?
+
+## Resolution comment
+
+Link graph construction, broken/orphan/index checks, reference queries, inventory, and existing-link classification now consume unified links. `links fix` emits the configured style. Page rename and move reuse destination-range rewriting for inline and Reference-style Markdown; heading rename additionally updates GitHub-compatible Markdown fragments. Command scan scopes remain unchanged.

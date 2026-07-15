@@ -68,10 +68,17 @@ fn split_suffix(dest: &str) -> Option<(&str, &str)> {
 }
 
 pub(crate) fn is_relative_md_path(path: &str) -> bool {
-    !path.starts_with('/')
-        && !path.contains("://")
-        && !path.starts_with("mailto:")
-        && Path::new(path).extension().is_some_and(|ext| ext == "md")
+    let Some(decoded) = decode_url_path(path) else {
+        return false;
+    };
+    !decoded.starts_with(['/', '\\'])
+        && !decoded
+            .split(['/', '\\'])
+            .next()
+            .is_some_and(|segment| segment.contains(':'))
+        && Path::new(&decoded)
+            .extension()
+            .is_some_and(|ext| ext == "md")
 }
 
 fn markdown_url(path: &Path, suffix: &str) -> String {
@@ -216,6 +223,40 @@ mod tests {
         assert_eq!(
             splice::apply(source, &edits),
             "See [topic].\n\n[topic]:\n  topics/New%20Name.md \"title\"\n"
+        );
+    }
+
+    #[test]
+    fn retargets_balanced_inline_destination() {
+        let source = "See [topic](topics/Old(Name).md).\n";
+        let document = document(source);
+        let edits = retarget_relative_links(
+            document.markdown_links(),
+            Path::new("/repo/overview.md"),
+            Path::new("/repo/topics/Old(Name).md"),
+            Path::new("/repo/topics/New(Name).md"),
+        );
+
+        assert_eq!(
+            splice::apply(source, &edits),
+            "See [topic](topics/New(Name).md).\n"
+        );
+    }
+
+    #[test]
+    fn retargets_definition_after_escaped_label_delimiter() {
+        let source = "[foo\\]:bar]: topics/Old%20Name.md\n";
+        let document = document(source);
+        let edits = retarget_relative_links(
+            document.markdown_links(),
+            Path::new("/repo/overview.md"),
+            Path::new("/repo/topics/Old Name.md"),
+            Path::new("/repo/topics/New Name.md"),
+        );
+
+        assert_eq!(
+            splice::apply(source, &edits),
+            "[foo\\]:bar]: topics/New%20Name.md\n"
         );
     }
 }

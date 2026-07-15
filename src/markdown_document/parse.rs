@@ -379,13 +379,29 @@ fn inline_destination_range(markup: &str, dest_url: &str) -> Option<Range<usize>
     }
     if markup.as_bytes().get(start) == Some(&b'<') {
         let inner_start = start + 1;
-        let inner_end = markup[inner_start..].find('>')? + inner_start;
+        let inner_end = find_unescaped(&markup[inner_start..], '>')? + inner_start;
         return (&markup[inner_start..inner_end] == dest_url).then_some(inner_start..inner_end);
     }
-    let end = markup[start..]
-        .find(|c: char| c == ')' || c.is_whitespace())
-        .map(|offset| start + offset)?;
-    (&markup[start..end] == dest_url).then_some(start..end)
+    let mut escaped = false;
+    let mut parentheses = 0;
+    let mut end = start;
+    for (offset, character) in markup[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            end = start + offset + character.len_utf8();
+            continue;
+        }
+        match character {
+            '\\' => escaped = true,
+            '(' => parentheses += 1,
+            ')' if parentheses == 0 => break,
+            ')' => parentheses -= 1,
+            character if character.is_whitespace() && parentheses == 0 => break,
+            _ => {}
+        }
+        end = start + offset + character.len_utf8();
+    }
+    (end > start).then_some(start..end)
 }
 
 fn reference_definition_destination_range(
@@ -393,7 +409,23 @@ fn reference_definition_destination_range(
     span: Range<usize>,
 ) -> Option<Range<usize>> {
     let definition = &source[span.clone()];
-    let mut start = definition.find("]:")? + 2;
+    let label_start = definition.find('[')? + 1;
+    let mut escaped = false;
+    let label_end = definition[label_start..]
+        .char_indices()
+        .find_map(|(offset, character)| {
+            if escaped {
+                escaped = false;
+                return None;
+            }
+            if character == '\\' {
+                escaped = true;
+                return None;
+            }
+            (character == ']' && definition.as_bytes().get(label_start + offset + 1) == Some(&b':'))
+                .then_some(label_start + offset)
+        })?;
+    let mut start = label_end + 2;
     while definition
         .as_bytes()
         .get(start)
@@ -403,7 +435,7 @@ fn reference_definition_destination_range(
     }
     if definition.as_bytes().get(start) == Some(&b'<') {
         let inner_start = start + 1;
-        let inner_end = definition[inner_start..].find('>')? + inner_start;
+        let inner_end = find_unescaped(&definition[inner_start..], '>')? + inner_start;
         return Some(span.start + inner_start..span.start + inner_end);
     }
 
@@ -426,6 +458,21 @@ fn reference_definition_destination_range(
         end = start + offset + character.len_utf8();
     }
     (end > start).then_some(span.start + start..span.start + end)
+}
+
+fn find_unescaped(source: &str, needle: char) -> Option<usize> {
+    let mut escaped = false;
+    source.char_indices().find_map(|(offset, character)| {
+        if escaped {
+            escaped = false;
+            return None;
+        }
+        if character == '\\' {
+            escaped = true;
+            return None;
+        }
+        (character == needle).then_some(offset)
+    })
 }
 
 /// Extract all headings from the source.
@@ -634,12 +681,16 @@ mod tests {
 
     #[test]
     fn excludes_external_markdown_documents_from_internal_links() {
-        let source = "See [remote](https://example.com/readme.md) and [local](topics/readme.md).";
+        let source = "See [remote](https://example.com/readme.md), [file](file:readme.md), [ftp](ftp:readme.md), [encoded](topics/readme%2Emd), and [local](topics/readme.md).";
         let links = extract_internal_links(source);
 
-        assert_eq!(links.len(), 1);
+        assert_eq!(links.len(), 2);
         assert_eq!(
             links[0].target,
+            InternalLinkTarget::Path("topics/readme%2Emd".to_owned())
+        );
+        assert_eq!(
+            links[1].target,
             InternalLinkTarget::Path("topics/readme.md".to_owned())
         );
     }

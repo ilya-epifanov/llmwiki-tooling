@@ -250,9 +250,8 @@ fn canonical_fragment(
                     document
                         .headings()
                         .iter()
-                        .filter(|candidate| candidate.text.eq_ignore_ascii_case(&resolved.text))
-                        .count()
-                        > 1
+                        .find(|candidate| candidate.text.eq_ignore_ascii_case(&resolved.text))
+                        .is_some_and(|first| first.byte_range != resolved.byte_range)
                 })
             {
                 return Ok(None);

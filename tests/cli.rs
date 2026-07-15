@@ -360,14 +360,15 @@ fn links_format_preserves_duplicate_heading_identity() {
         "# Target\n\n## Repeated\n\n## Repeated\n",
     )
     .unwrap();
-    let original = "See [second](topics/Target.md#repeated-1).\n";
+    let original =
+        "See [first](topics/Target.md#repeated) and [second](topics/Target.md#repeated-1).\n";
     std::fs::write(dir.path().join("overview.md"), original).unwrap();
 
     let output = run(dir.path(), &["links", "format", "--write"]);
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
-        original
+        "See [[Target#Repeated|first]] and [second](topics/Target.md#repeated-1).\n"
     );
 }
 

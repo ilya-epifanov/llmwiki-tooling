@@ -19,7 +19,7 @@ fn bare_mentions_for_file(
     Ok(matcher.find_bare_mentions(document.source(), document.classified_ranges(), &self_page))
 }
 
-/// Run `links check`: find bare mentions that should be wikilinks.
+/// Run `links check`: find bare mentions that should be internal links.
 pub fn check(wiki: &Wiki) -> Result<usize, WikiError> {
     let matcher = ConceptMatcher::new(wiki.autolink_pages()?);
     let mut total_mentions = 0;
@@ -31,11 +31,10 @@ pub fn check(wiki: &Wiki) -> Result<usize, WikiError> {
         for m in &mentions {
             let display = wiki.display_name(&m.concept).unwrap_or(m.concept.as_str());
             println!(
-                "{}:{}:{}: bare mention \"{}\" (should be [[{}]])",
+                "{}:{}:{}: bare mention \"{}\" (should be linked)",
                 rel_path.display(),
                 m.line,
                 m.col,
-                display,
                 display,
             );
         }
@@ -89,7 +88,7 @@ pub fn format(wiki: &mut Wiki, write: bool) -> Result<usize, WikiError> {
     Ok(total_edits)
 }
 
-/// Run `links broken`: find broken wikilinks.
+/// Run `links broken`: find broken internal links.
 pub fn broken(wiki: &Wiki) -> Result<usize, WikiError> {
     let index = LinkIndex::build(wiki)?;
 
@@ -111,7 +110,7 @@ pub fn broken(wiki: &Wiki) -> Result<usize, WikiError> {
     Ok(index.broken_links().len())
 }
 
-/// Run `links orphans`: find pages with no inbound wikilinks.
+/// Run `links orphans`: find pages with no inbound internal links.
 pub fn orphans(wiki: &Wiki) -> Result<usize, WikiError> {
     let index = LinkIndex::build(wiki)?;
     let orphan_pages = index.orphans(wiki);

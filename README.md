@@ -1,6 +1,6 @@
 # `llmwiki-tool` - CLI for managing LLM-wikis
 
-A Rust CLI for managing [LLM-wikis](https://github.com/karpathy/LLM-wiki) — markdown knowledge bases with Obsidian-style wikilinks.
+A Rust CLI for managing [LLM-wikis](https://github.com/karpathy/LLM-wiki) — Markdown knowledge bases with Obsidian and regular Markdown links.
 
 Designed to simplify an LLM agent's job of keeping the wiki clean: fix broken links, rename pages with full reference updates, detect orphans, and lint against configurable rules — all through commands that produce structured output and save tokens.
 
@@ -56,7 +56,9 @@ llmwiki-tool setup init              # Generate wiki.toml from detected structur
 llmwiki-tool setup example-config    # Output annotated wiki.toml with all options
 ```
 
-`[[wikilinks]]` are scanned repo-wide across non-verbatim Markdown. Wikilinks resolve by filename stem or Obsidian `aliases:` frontmatter.
+Internal links are scanned repo-wide across non-verbatim Markdown. Obsidian links resolve by filename stem or `aliases:` frontmatter; regular Markdown links resolve by their relative `.md` path. Page names and aliases remain repository-wide and case-insensitively unique for stable conversion between styles.
+
+Both styles are always accepted, including mixed documents. `[linking].link_style` controls newly generated links and the explicit `links format` command; unrelated commands preserve existing syntax. Markdown repositories may set `reference_style_threshold` to use Reference-style links when one document links to the same target page repeatedly.
 
 Page categories:
 
@@ -72,10 +74,11 @@ Broken-link lint uses `[checks].broken_links` for managed pages (default: `error
 ### Links
 
 ```bash
-llmwiki-tool links check       # Find bare mentions that should be wikilinks
+llmwiki-tool links check       # Find bare mentions that should be internal links
 llmwiki-tool links fix         # Auto-link bare mentions (dry-run by default, --write to apply)
-llmwiki-tool links broken      # Find wikilinks pointing to non-existent pages/headings/blocks
-llmwiki-tool links orphans     # Find pages with no inbound wikilinks
+llmwiki-tool links format      # Convert resolvable links to the configured style
+llmwiki-tool links broken      # Find internal links pointing to missing pages/fragments
+llmwiki-tool links orphans     # Find pages with no inbound internal links
 ```
 
 ### Rename
@@ -85,7 +88,7 @@ llmwiki-tool rename "Old Page" "New Page"         # Rename page with full refere
 llmwiki-tool rename "Old Page" "New Page" --write # Apply changes
 ```
 
-Updates all `[[Old Page]]`, `[[Old Page#heading]]`, and `[[Old Page|alias]]` references across non-verbatim Markdown.
+Updates Obsidian links and relative inline or Reference-style Markdown destinations across non-verbatim Markdown.
 
 ### Move
 
@@ -94,7 +97,7 @@ llmwiki-tool move "Page Name" archive/topics         # Dry-run
 llmwiki-tool move "Page Name" archive/topics --write # Move and rebase relative markdown links
 ```
 
-Moves a page file and updates relative standard Markdown links (`[text](path.md)` and `[id]: path.md`) that would otherwise point at the old location. Wikilinks usually do not need updates because resolution is name-based.
+Moves a page file and updates relative inline and Reference-style Markdown destinations that would otherwise point at the old location. Obsidian links usually do not need updates because resolution is name-based.
 
 ### Sections
 
@@ -104,7 +107,7 @@ llmwiki-tool sections rename "Key results" "Key findings" --write          # App
 llmwiki-tool sections rename "Old heading" "New heading" --dirs papers/    # Limit scope
 ```
 
-Renames headings and updates all `[[page#heading]]` fragment references.
+Renames headings and updates Obsidian heading fragments plus GitHub-compatible Markdown heading fragments.
 
 ### References
 

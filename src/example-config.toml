@@ -4,7 +4,7 @@
 # In practice, only include settings that differ from defaults.
 
 # Index file path, relative to wiki root.
-# Scanned for wikilinks (index-coverage check) but NOT treated as a managed page.
+# Scanned for internal links (index-coverage check) but NOT treated as a managed page.
 # Default: "index.md". Set to "" to disable index coverage.
 index = "index.md"
 
@@ -56,6 +56,15 @@ default_patterns = true
 patterns = ["generated/", "scratch/**/*.md"]
 
 [linking]
+# Preferred style for generated links and explicit `wiki links format` conversion.
+# Both Obsidian and Markdown links are always parsed. Default: "obsidian"
+link_style = "markdown"
+
+# With Markdown style, use Reference-style links when a target page is linked at
+# least this many times in one document. Omit to always generate inline links.
+# Must be a positive integer and requires link_style = "markdown".
+reference_style_threshold = 2
+
 # Page names to never auto-link, even in autolink=true directories.
 # Default: []
 exclude = ["the", "a", "an"]
@@ -67,21 +76,22 @@ autolink_field = "autolink"
 # Wiki-wide structural checks. These apply to all pages regardless of directory.
 # Values: "error" (causes exit code 2), "warn" (prints but exits 0), "off"
 [checks]
-# Managed-page [[wikilinks]] must resolve to a non-verbatim Markdown file by filename stem or aliases.
-# Fragment references ([[page#heading]], [[page#^block]]) are also validated.
+# Managed-page internal links must resolve to a non-verbatim Markdown file.
+# Obsidian links resolve by page name or alias; Markdown links resolve by path.
+# Heading and block fragments are also validated.
 # Default: "error"
 broken_links = "error"
 
-# Unmanaged-page [[wikilinks]] get best-effort checking with separate severity.
+# Unmanaged-page internal links get best-effort checking with separate severity.
 # Verbatim pages are skipped and never emit link warnings/errors.
 # Default: "warn"
 unmanaged_broken_links = "warn"
 
-# Every wiki page must have at least one inbound [[wikilink]] from another page.
+# Every wiki page must have at least one inbound internal link from another page.
 # Default: "error"
 orphan_pages = "error"
 
-# Every wiki page must be referenced via [[wikilink]] in the index file.
+# Every wiki page must be referenced by an internal link in the index file.
 # Only active if `index` is set and the file exists.
 # Default: "error"
 index_coverage = "error"

@@ -195,7 +195,7 @@ fn run_orphan_pages(wiki: &Wiki, link_index: &LinkIndex) -> usize {
     for page_id in &orphans {
         if let Some(rel_path) = wiki.get(page_id) {
             eprintln!(
-                "error[orphan]: {} has no inbound wikilinks",
+                "error[orphan]: {} has no inbound internal links",
                 rel_path.display(),
             );
         }

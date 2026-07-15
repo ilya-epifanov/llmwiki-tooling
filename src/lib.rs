@@ -40,7 +40,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Wikilink operations
+    /// Internal link operations
     Links {
         #[command(subcommand)]
         action: LinksAction,
@@ -131,7 +131,7 @@ impl From<SeverityArg> for SeverityFilter {
 
 #[derive(Subcommand)]
 enum LinksAction {
-    /// Find bare mentions that should be wikilinks
+    /// Find bare mentions that should be internal links
     Check,
     /// Auto-link bare mentions
     Fix {
@@ -145,9 +145,9 @@ enum LinksAction {
         #[arg(long)]
         write: bool,
     },
-    /// Find wikilinks pointing to non-existent pages/headings/blocks
+    /// Find internal links pointing to non-existent pages/headings/blocks
     Broken,
-    /// Find pages with no inbound wikilinks
+    /// Find pages with no inbound internal links
     Orphans,
 }
 
@@ -179,7 +179,7 @@ enum FrontmatterAction {
 
 #[derive(Subcommand)]
 enum SectionsAction {
-    /// Rename a heading across the wiki, including [[page#heading]] references
+    /// Rename a heading and its Obsidian and Markdown references
     Rename {
         /// Current heading text
         old: String,

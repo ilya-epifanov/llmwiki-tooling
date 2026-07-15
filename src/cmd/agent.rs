@@ -61,6 +61,9 @@ Run: `wiki setup init`
 This generates a starting-point wiki.toml. Edit it to customize:
 - Set `autolink = false` on directories whose page names are too long or specific
   to be useful auto-link patterns (dates, identifiers, compound slugs)
+- Set `[linking].link_style` to `obsidian` or `markdown`
+- For Markdown links, set `reference_style_threshold` only when repeated targets
+  should use Reference-style links
 - Add `[[rules]]` for required sections, required frontmatter, mirror parity
 - Add citation patterns if the wiki tracks references to external sources
 - Adjust `[checks]` severities if needed
@@ -84,6 +87,7 @@ Repeat until `wiki lint` exits clean.
 Run and verify output makes sense:
 - `wiki links check` — bare mentions should be genuine misses, not false positives
 - `wiki links broken` — should be empty if the wiki is healthy
+- `wiki links format` — review the configured style conversion before using `--write`
 - `wiki refs to <pick a page from the wiki>` — verify the link graph looks right
 - Review `wiki scan` output for inconsistent section headings across directories
   and use `wiki sections rename` to standardize them
@@ -120,11 +124,15 @@ If it doesn't:
 Key commands the documentation should cover:
 - `wiki lint` — structural integrity check (before commits)
 - `wiki links check` / `wiki links fix --write` — bare mention detection (after page creation)
+- `wiki links format --write` — explicit conversion to the configured link style
 - `wiki rename <old> <new> --write` — page rename with reference update
 - `wiki move <page> <dir> --write` — page relocation with relative markdown link updates
 - `wiki refs to <page>` — impact analysis before editing
 - `wiki sections rename <old> <new> --write` — heading standardization
 - `wiki setup prompt` — re-read these instructions
+
+When authoring links, prefer heading links. Use block links only when a heading
+cannot identify the intended content.
 "#
     );
 
@@ -179,7 +187,7 @@ pub fn scan(root: &WikiRoot, ignore: &IgnoreConfig) -> Result<(), WikiError> {
 
     if let Some(index) = inventory.index() {
         println!(
-            "## Index: {}\n  References {} unique page names via wikilinks\n",
+            "## Index: {}\n  References {} unique internal-link targets\n",
             index.path, index.unique_refs
         );
     }

@@ -8,9 +8,7 @@ use crate::error::WikiError;
 use crate::markdown_document::MarkdownReferenceDefinition;
 use crate::markdown_links;
 use crate::mention::BareMention;
-use crate::page::{
-    InternalLinkOccurrence, LinkFragment, LinkStyle, PageId, github_heading_anchors,
-};
+use crate::page::{InternalLinkOccurrence, LinkFragment, LinkStyle, PageId};
 use crate::splice;
 use crate::wiki::Wiki;
 
@@ -245,18 +243,20 @@ fn canonical_fragment(
     let document = wiki.file(&wiki.abs_path(target_path))?;
     match fragment {
         LinkFragment::Heading(fragment) => {
-            let heading = match link.style {
-                LinkStyle::Obsidian => document
-                    .headings()
-                    .iter()
-                    .find(|heading| heading.text.eq_ignore_ascii_case(fragment)),
-                LinkStyle::Markdown => document
-                    .headings()
-                    .iter()
-                    .zip(github_heading_anchors(document.headings()))
-                    .find(|(_, anchor)| anchor == fragment)
-                    .map(|(heading, _)| heading),
-            };
+            let heading = document.resolve_heading(fragment, link.style);
+            if wiki.config().linking.link_style == LinkStyle::Obsidian
+                && link.style == LinkStyle::Markdown
+                && heading.is_some_and(|resolved| {
+                    document
+                        .headings()
+                        .iter()
+                        .filter(|candidate| candidate.text.eq_ignore_ascii_case(&resolved.text))
+                        .count()
+                        > 1
+                })
+            {
+                return Ok(None);
+            }
             Ok(heading.map(|heading| Some(LinkFragment::Heading(heading.text.clone()))))
         }
         LinkFragment::Block(block) => Ok(document
@@ -327,11 +327,8 @@ fn markdown_destination(file_path: &Path, wiki: &Wiki, link: &ResolvedLink) -> S
                     .file(&wiki.abs_path(&link.target_path))
                     .expect("resolved target remains readable");
                 let anchor = document
-                    .headings()
-                    .iter()
-                    .zip(github_heading_anchors(document.headings()))
-                    .find(|(candidate, _)| candidate.text == *heading)
-                    .map(|(_, anchor)| anchor)
+                    .resolve_heading(heading, LinkStyle::Obsidian)
+                    .and_then(|heading| document.markdown_anchor(heading))
                     .unwrap_or_else(|| crate::page::github_heading_anchor(heading));
                 destination.push_str(&anchor);
             }
@@ -352,22 +349,7 @@ fn markdown_page_destination(file_path: &Path, wiki: &Wiki, target_path: &Path) 
     let path = markdown_links::relative_path(source_parent, target_path)
         .to_string_lossy()
         .replace('\\', "/");
-    encode_markdown_path(&path)
-}
-
-fn encode_markdown_path(path: &str) -> String {
-    path.chars()
-        .map(|character| match character {
-            ' ' => "%20".to_owned(),
-            '%' => "%25".to_owned(),
-            '#' => "%23".to_owned(),
-            '?' => "%3F".to_owned(),
-            '<' => "%3C".to_owned(),
-            '>' => "%3E".to_owned(),
-            '"' => "%22".to_owned(),
-            _ => character.to_string(),
-        })
-        .collect()
+    markdown_links::encode_url_path(&path)
 }
 
 fn logical_label(display_name: &str, fragment: Option<&LinkFragment>) -> String {

@@ -232,6 +232,41 @@ fn markdown_links_are_first_class_graph_edges() {
 }
 
 #[test]
+fn external_markdown_urls_are_not_wiki_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("wiki.toml"), "index = \"\"\n").unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [remote](https://example.com/readme.md).\n",
+    )
+    .unwrap();
+
+    let broken = run(dir.path(), &["links", "broken"]);
+    assert!(broken.status.success(), "{}", text(&broken.stdout));
+    assert!(text(&broken.stdout).is_empty(), "{}", text(&broken.stdout));
+}
+
+#[test]
+fn same_page_obsidian_heading_links_resolve() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("topics/Target.md"),
+        "# Target\n\nSee [[#Here]].\n\n## Here\n",
+    )
+    .unwrap();
+
+    let broken = run(dir.path(), &["links", "broken"]);
+    assert!(broken.status.success(), "{}", text(&broken.stdout));
+    assert!(text(&broken.stdout).is_empty(), "{}", text(&broken.stdout));
+}
+
+#[test]
 fn links_format_uses_reference_style_threshold_and_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("topics")).unwrap();
@@ -309,6 +344,76 @@ fn links_format_converts_to_obsidian_without_touching_images() {
         std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
         "See [[Target#Key Findings|details]] and [[Target#^evidence|evidence]].\n\n![diagram][asset]\n\n[asset]: diagram.png\n"
     );
+}
+
+#[test]
+fn links_format_preserves_duplicate_heading_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[linking]\nlink_style = \"obsidian\"\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("topics/Target.md"),
+        "# Target\n\n## Repeated\n\n## Repeated\n",
+    )
+    .unwrap();
+    let original = "See [second](topics/Target.md#repeated-1).\n";
+    std::fs::write(dir.path().join("overview.md"), original).unwrap();
+
+    let output = run(dir.path(), &["links", "format", "--write"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn rename_updates_encoded_and_multiline_markdown_destinations() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("topics/Old Name.md"), "# Old Name\n").unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [inline](topics/Old%20Name.md) and [reference].\n\n[reference]:\n  topics/Old%20Name.md\n",
+    )
+    .unwrap();
+
+    let output = run(dir.path(), &["rename", "Old Name", "New Name", "--write"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("overview.md")).unwrap(),
+        "See [inline](topics/New%20Name.md) and [reference].\n\n[reference]:\n  topics/New%20Name.md\n"
+    );
+}
+
+#[test]
+fn links_format_dry_run_handles_multiline_reference_definitions() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("topics")).unwrap();
+    std::fs::write(
+        dir.path().join("wiki.toml"),
+        "index = \"\"\n\n[linking]\nlink_style = \"obsidian\"\n\n[[directories]]\npath = \"topics\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("topics/Target.md"), "# Target\n").unwrap();
+    std::fs::write(
+        dir.path().join("overview.md"),
+        "See [Target].\n\n[Target]:\n  topics/Target.md\n",
+    )
+    .unwrap();
+
+    let output = run(dir.path(), &["links", "format"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("[[Target]]"));
 }
 
 #[test]

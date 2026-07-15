@@ -32,24 +32,29 @@ pub fn diff(source: &str, path: &std::path::Path, edits: &[(Range<usize>, String
     for (range, replacement) in &sorted {
         let line_num = offset_to_line(&line_offsets, range.start);
         let line_start = line_offsets[line_num];
-        let line_end = line_offsets
-            .get(line_num + 1)
+        let end_offset = if range.end > range.start {
+            range.end - 1
+        } else {
+            range.start
+        };
+        let end_line = offset_to_line(&line_offsets, end_offset);
+        let context_end = line_offsets
+            .get(end_line + 1)
             .copied()
             .unwrap_or(source.len());
-        let original_line = &source[line_start..line_end];
+        let original = &source[line_start..context_end];
 
-        // Build the modified line
         let prefix = &source[line_start..range.start];
-        let suffix = &source[range.end..line_end];
-        let modified_line = format!("{prefix}{replacement}{suffix}");
+        let suffix = &source[range.end..context_end];
+        let modified = format!("{prefix}{replacement}{suffix}");
 
         output.push_str(&format!("@@ -{} +{} @@\n", line_num + 1, line_num + 1));
-        output.push_str(&format!("-{original_line}"));
-        if !original_line.ends_with('\n') {
+        output.push_str(&format!("-{original}"));
+        if !original.ends_with('\n') {
             output.push('\n');
         }
-        output.push_str(&format!("+{modified_line}"));
-        if !modified_line.ends_with('\n') {
+        output.push_str(&format!("+{modified}"));
+        if !modified.ends_with('\n') {
             output.push('\n');
         }
     }

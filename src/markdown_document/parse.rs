@@ -1,12 +1,12 @@
 use std::ops::Range;
-use std::path::Path;
 
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 use super::{ClassifiedRange, MarkdownLinkDestination, MarkdownReferenceDefinition, RangeKind};
+use crate::markdown_links;
 use crate::page::{
     BlockId, Heading, InternalLinkOccurrence, InternalLinkTarget, LinkFragment, LinkStyle, PageId,
-    WikilinkFragment, WikilinkOccurrence,
+    WikilinkOccurrence,
 };
 
 fn parser_options() -> Options {
@@ -163,45 +163,17 @@ pub(super) fn classify_ranges(source: &str) -> Vec<ClassifiedRange> {
 
 /// Extract all wikilink occurrences from the source.
 pub(super) fn extract_wikilinks(source: &str) -> Vec<WikilinkOccurrence> {
-    let parser = Parser::new_ext(source, parser_options());
-    let offset_iter = parser.into_offset_iter();
-    let mut wikilinks = Vec::new();
-
-    for (event, range) in offset_iter {
-        let dest_url = match &event {
-            Event::Start(Tag::Link {
-                link_type: LinkType::WikiLink { .. },
-                dest_url,
-                ..
-            })
-            | Event::Start(Tag::Image {
-                link_type: LinkType::WikiLink { .. },
-                dest_url,
-                ..
-            }) => dest_url.as_ref(),
-            _ => continue,
-        };
-
-        let (page_str, fragment) = match dest_url.split_once('#') {
-            Some((page, frag)) => {
-                let fragment = if let Some(block) = frag.strip_prefix('^') {
-                    WikilinkFragment::Block(BlockId::from(block))
-                } else {
-                    WikilinkFragment::Heading(frag.to_owned())
-                };
-                (page, Some(fragment))
-            }
-            None => (dest_url, None),
-        };
-
-        wikilinks.push(WikilinkOccurrence {
-            page: PageId::from(page_str),
-            fragment,
-            byte_range: range,
-        });
-    }
-
-    wikilinks
+    extract_internal_links(source)
+        .into_iter()
+        .filter_map(|link| match link.target {
+            InternalLinkTarget::PageName(page) => Some(WikilinkOccurrence {
+                page,
+                fragment: link.fragment,
+                byte_range: link.byte_range,
+            }),
+            InternalLinkTarget::Path(_) => None,
+        })
+        .collect()
 }
 
 /// Extract Obsidian and Markdown internal links into one syntax-neutral view.
@@ -255,7 +227,7 @@ fn internal_link(
         }
         LinkType::Inline | LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => {
             let (path, fragment) = split_fragment(destination);
-            if !path.is_empty() && Path::new(path).extension().is_none_or(|ext| ext != "md") {
+            if !path.is_empty() && !markdown_links::is_relative_md_path(path) {
                 return None;
             }
             (
@@ -364,7 +336,20 @@ pub(super) fn extract_markdown_links(source: &str) -> Vec<MarkdownLinkDestinatio
         }
     }
 
-    links.extend(markdown_reference_definitions(source));
+    let parser = Parser::new_ext(source, parser_options());
+    links.extend(
+        parser
+            .reference_definitions()
+            .iter()
+            .filter_map(|(_, definition)| {
+                reference_definition_destination_range(source, definition.span.clone()).map(
+                    |byte_range| MarkdownLinkDestination {
+                        destination: definition.dest.to_string(),
+                        byte_range,
+                    },
+                )
+            }),
+    );
     links
 }
 
@@ -403,51 +388,44 @@ fn inline_destination_range(markup: &str, dest_url: &str) -> Option<Range<usize>
     (&markup[start..end] == dest_url).then_some(start..end)
 }
 
-fn markdown_reference_definitions(source: &str) -> Vec<MarkdownLinkDestination> {
-    let mut links = Vec::new();
-    let mut line_start = 0;
-    for line in source.split_inclusive('\n') {
-        if let Some((byte_range, destination)) = reference_definition_dest(line, line_start) {
-            links.push(MarkdownLinkDestination {
-                destination: destination.to_owned(),
-                byte_range,
-            });
-        }
-        line_start += line.len();
-    }
-    links
-}
-
-fn reference_definition_dest(line: &str, line_start: usize) -> Option<(Range<usize>, &str)> {
-    let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
-    if indent > 3 {
-        return None;
-    }
-    let rest = &line[indent..];
-    let label_end = rest.find("]:")?;
-    if !rest.starts_with('[') {
-        return None;
-    }
-    let mut dest_start = indent + label_end + 2;
-    while line
+fn reference_definition_destination_range(
+    source: &str,
+    span: Range<usize>,
+) -> Option<Range<usize>> {
+    let definition = &source[span.clone()];
+    let mut start = definition.find("]:")? + 2;
+    while definition
         .as_bytes()
-        .get(dest_start)
+        .get(start)
         .is_some_and(u8::is_ascii_whitespace)
     {
-        dest_start += 1;
+        start += 1;
     }
-    if line.as_bytes().get(dest_start) == Some(&b'<') {
-        let inner_start = dest_start + 1;
-        let inner_end = line[inner_start..].find('>')? + inner_start;
-        let dest = &line[inner_start..inner_end];
-        return Some((line_start + inner_start..line_start + inner_end, dest));
+    if definition.as_bytes().get(start) == Some(&b'<') {
+        let inner_start = start + 1;
+        let inner_end = definition[inner_start..].find('>')? + inner_start;
+        return Some(span.start + inner_start..span.start + inner_end);
     }
-    let dest_end = line[dest_start..]
-        .find(char::is_whitespace)
-        .map(|offset| dest_start + offset)
-        .unwrap_or(line.len());
-    let dest = &line[dest_start..dest_end];
-    (!dest.is_empty()).then_some((line_start + dest_start..line_start + dest_end, dest))
+
+    let mut escaped = false;
+    let mut parentheses = 0;
+    let mut end = start;
+    for (offset, character) in definition[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            end = start + offset + character.len_utf8();
+            continue;
+        }
+        match character {
+            '\\' => escaped = true,
+            '(' => parentheses += 1,
+            ')' if parentheses > 0 => parentheses -= 1,
+            character if character.is_whitespace() && parentheses == 0 => break,
+            _ => {}
+        }
+        end = start + offset + character.len_utf8();
+    }
+    (end > start).then_some(span.start + start..span.start + end)
 }
 
 /// Extract all headings from the source.
@@ -464,7 +442,7 @@ pub(super) fn extract_headings(source: &str) -> Vec<Heading> {
                 in_heading = Some((level as u8, range));
                 heading_text.clear();
             }
-            Event::Text(text) if in_heading.is_some() => {
+            Event::Text(text) | Event::Code(text) if in_heading.is_some() => {
                 heading_text.push_str(&text);
             }
             Event::End(TagEnd::Heading(_)) => {
@@ -601,7 +579,7 @@ mod tests {
         assert_eq!(wikilinks[0].page.as_str(), "post-training");
         assert_eq!(
             wikilinks[0].fragment,
-            Some(WikilinkFragment::Block(BlockId::from("method-comparison")))
+            Some(LinkFragment::Block(BlockId::from("method-comparison")))
         );
     }
 
@@ -620,7 +598,7 @@ mod tests {
         assert_eq!(wikilinks.len(), 1);
         assert_eq!(
             wikilinks[0].fragment,
-            Some(WikilinkFragment::Heading("Some Heading".to_owned()))
+            Some(LinkFragment::Heading("Some Heading".to_owned()))
         );
     }
 
@@ -655,8 +633,20 @@ mod tests {
     }
 
     #[test]
+    fn excludes_external_markdown_documents_from_internal_links() {
+        let source = "See [remote](https://example.com/readme.md) and [local](topics/readme.md).";
+        let links = extract_internal_links(source);
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0].target,
+            InternalLinkTarget::Path("topics/readme.md".to_owned())
+        );
+    }
+
+    #[test]
     fn extracts_headings() {
-        let source = "# Title\n\nParagraph\n\n## Section One\n\nMore text\n\n### Sub Section";
+        let source = "# Title\n\nParagraph\n\n## Section One\n\nMore text\n\n### Use `inline code`";
         let headings = extract_headings(source);
         assert_eq!(headings.len(), 3);
         assert_eq!(headings[0].level, 1);
@@ -664,7 +654,7 @@ mod tests {
         assert_eq!(headings[1].level, 2);
         assert_eq!(headings[1].text, "Section One");
         assert_eq!(headings[2].level, 3);
-        assert_eq!(headings[2].text, "Sub Section");
+        assert_eq!(headings[2].text, "Use inline code");
     }
 
     #[test]

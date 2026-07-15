@@ -17,6 +17,7 @@ pub(crate) fn rebase_relative_links(
         if !is_relative_md_path(path_part) {
             return None;
         }
+        let path_part = decode_url_path(path_part)?;
         let target = normalize_path(old_parent.join(path_part));
         let target = if target == old_path {
             new_path.to_path_buf()
@@ -39,6 +40,7 @@ pub(crate) fn retarget_relative_links(
         if !is_relative_md_path(path_part) {
             return None;
         }
+        let path_part = decode_url_path(path_part)?;
         let target = normalize_path(source_parent.join(path_part));
         (target == old_path).then(|| markdown_url(&relative_path(source_parent, new_path), suffix))
     })
@@ -65,7 +67,7 @@ fn split_suffix(dest: &str) -> Option<(&str, &str)> {
     (!path.is_empty()).then_some((path, suffix))
 }
 
-fn is_relative_md_path(path: &str) -> bool {
+pub(crate) fn is_relative_md_path(path: &str) -> bool {
     !path.starts_with('/')
         && !path.contains("://")
         && !path.starts_with("mailto:")
@@ -73,12 +75,27 @@ fn is_relative_md_path(path: &str) -> bool {
 }
 
 fn markdown_url(path: &Path, suffix: &str) -> String {
-    let mut out = path.to_string_lossy().replace('\\', "/");
+    let mut out = encode_url_path(&path.to_string_lossy().replace('\\', "/"));
     if !suffix.is_empty() {
         out.push('#');
         out.push_str(suffix);
     }
     out
+}
+
+pub(crate) fn encode_url_path(path: &str) -> String {
+    path.chars()
+        .map(|character| match character {
+            ' ' => "%20".to_owned(),
+            '%' => "%25".to_owned(),
+            '#' => "%23".to_owned(),
+            '?' => "%3F".to_owned(),
+            '<' => "%3C".to_owned(),
+            '>' => "%3E".to_owned(),
+            '"' => "%22".to_owned(),
+            _ => character.to_string(),
+        })
+        .collect()
 }
 
 pub(crate) fn normalize_path(path: PathBuf) -> PathBuf {
@@ -182,6 +199,23 @@ mod tests {
         assert_eq!(
             splice::apply(source, &edits),
             "See [topic][topic].\n\n[topic]: topics/new.md \"title\"\n"
+        );
+    }
+
+    #[test]
+    fn retargets_multiline_reference_definition_destination() {
+        let source = "See [topic].\n\n[topic]:\n  topics/Old%20Name.md \"title\"\n";
+        let document = document(source);
+        let edits = retarget_relative_links(
+            document.markdown_links(),
+            Path::new("/repo/overview.md"),
+            Path::new("/repo/topics/Old Name.md"),
+            Path::new("/repo/topics/New Name.md"),
+        );
+
+        assert_eq!(
+            splice::apply(source, &edits),
+            "See [topic].\n\n[topic]:\n  topics/New%20Name.md \"title\"\n"
         );
     }
 }

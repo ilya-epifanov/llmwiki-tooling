@@ -2,10 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::error::WikiError;
-use crate::page::{
-    Heading, InternalLinkOccurrence, LinkFragment, LinkStyle, PageId, WikilinkOccurrence,
-    github_heading_anchors,
-};
+use crate::page::{InternalLinkOccurrence, LinkFragment, PageId, WikilinkOccurrence};
 use crate::wiki::Wiki;
 
 /// Why a wikilink could not be resolved.
@@ -156,11 +153,10 @@ fn broken_reason(
     let target_path = wiki.abs_path(target_path);
 
     match fragment {
-        LinkFragment::Heading(heading) => Ok((!heading_exists(
-            wiki.file(&target_path)?.headings(),
-            heading,
-            link.style,
-        ))
+        LinkFragment::Heading(heading) => Ok((wiki
+            .file(&target_path)?
+            .resolve_heading(heading, link.style)
+            .is_none())
         .then(|| BrokenReason::Heading {
             heading: heading.clone(),
         })),
@@ -175,20 +171,11 @@ fn broken_reason(
     }
 }
 
-fn heading_exists(headings: &[Heading], fragment: &str, style: LinkStyle) -> bool {
-    if style == LinkStyle::Obsidian {
-        return headings
-            .iter()
-            .any(|heading| heading.text.eq_ignore_ascii_case(fragment));
-    }
-
-    github_heading_anchors(headings).any(|anchor| anchor == fragment)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::WikiConfig;
+    use crate::page::Heading;
     use crate::wiki::WikiRoot;
 
     #[test]
@@ -234,7 +221,7 @@ mod tests {
         .collect::<Vec<_>>();
 
         assert_eq!(
-            github_heading_anchors(&headings).collect::<Vec<_>>(),
+            crate::page::github_heading_anchors(&headings).collect::<Vec<_>>(),
             [
                 "thisll-be-a-helpful-section-about-the-greek-letter-Θ",
                 "repeated",

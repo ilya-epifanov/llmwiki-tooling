@@ -4,7 +4,9 @@ use once_cell::unsync::OnceCell;
 
 use crate::error::FrontmatterError;
 use crate::frontmatter::{self, Frontmatter};
-use crate::page::{BlockId, Heading, InternalLinkOccurrence, WikilinkOccurrence};
+use crate::page::{
+    BlockId, Heading, InternalLinkOccurrence, LinkStyle, WikilinkOccurrence, github_heading_anchors,
+};
 
 mod parse;
 
@@ -104,6 +106,29 @@ impl MarkdownDocument {
     pub fn headings(&self) -> &[Heading] {
         self.headings
             .get_or_init(|| parse::extract_headings(&self.source))
+    }
+
+    pub(crate) fn resolve_heading(&self, fragment: &str, style: LinkStyle) -> Option<&Heading> {
+        match style {
+            LinkStyle::Obsidian => self
+                .headings()
+                .iter()
+                .find(|heading| heading.text.eq_ignore_ascii_case(fragment)),
+            LinkStyle::Markdown => self
+                .headings()
+                .iter()
+                .zip(github_heading_anchors(self.headings()))
+                .find(|(_, anchor)| anchor == fragment)
+                .map(|(heading, _)| heading),
+        }
+    }
+
+    pub(crate) fn markdown_anchor(&self, heading: &Heading) -> Option<String> {
+        self.headings()
+            .iter()
+            .zip(github_heading_anchors(self.headings()))
+            .find(|(candidate, _)| candidate.byte_range == heading.byte_range)
+            .map(|(_, anchor)| anchor)
     }
 
     pub fn wikilinks(&self) -> &[WikilinkOccurrence] {

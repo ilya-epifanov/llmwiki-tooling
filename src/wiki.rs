@@ -244,6 +244,11 @@ impl Wiki {
     ) -> Option<(&PageId, &PathBuf)> {
         match &link.target {
             InternalLinkTarget::PageName(page) => {
+                if page.as_str().is_empty() {
+                    let source = self.rel_path(source_path);
+                    let page = self.path_ids.get(source)?;
+                    return Some((page, self.targets.get(page)?));
+                }
                 let canonical = self.canonical_id(page)?;
                 Some((canonical, self.targets.get(canonical)?))
             }

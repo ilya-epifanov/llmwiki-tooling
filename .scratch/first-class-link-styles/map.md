@@ -1,7 +1,7 @@
 ---
 title: First-class Obsidian and Markdown link styles
 labels: ["wayfinder:map"]
-status: open
+status: closed
 ---
 
 ## Destination
@@ -31,6 +31,7 @@ Implemented and verified equal parsing, resolution, linting, graphing, rename, a
 - [Decide the library API compatibility boundary](issues/08-decide-library-api-compatibility.md) — Keep the new model internal and preserve the existing syntax-specific document views used inside the crate.
 - [Define repository compatibility and migration behavior](issues/09-define-compatibility-and-migration.md) — Parse mixed styles without churn and require explicit `links format` for repository-wide conversion.
 - [Define agent and setup guidance for link styles](issues/10-define-agent-and-setup-guidance.md) — Document both styles, explicit formatting, the threshold, stable page-name uniqueness, and heading-over-block guidance.
+- [Sequence implementation and verification](issues/11-sequence-implementation-and-verification.md) — Land parser-first logical slices, close review-discovered parity gaps, and verify the complete implementation with tests, clippy, formatting, release build, and two-axis review.
 
 ## Not yet specified
 

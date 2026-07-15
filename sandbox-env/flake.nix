@@ -31,6 +31,8 @@
           targetPkgs = pkgs: with pkgs; [
             llm-pkgs.claude-code
             llm-pkgs.pi
+            llm-pkgs.codex
+            nodejs
             ripgrep
             ast-grep
             git

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/ilya-epifanov/llmwiki-tooling/compare/v0.3.0...v0.3.1) - 2026-07-23
+
+### Added
+
+- format links by repository style
+- treat Markdown links as wiki edges
+
+### Fixed
+
+- scope page names to configured pages
+- handle CommonMark destination edge cases
+- preserve internal link semantics
+
+### Other
+
+- explain repository link styles
+
 ### Added
 
 - first-class Obsidian and Markdown internal-link parsing
